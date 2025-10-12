@@ -1,5 +1,7 @@
 #include <ntifs.h>
 
+#include <Aux_klib.h>
+
 #define DRIVER_NAME "SnitchHunt"
 
 
@@ -14,12 +16,216 @@
 
 
 #define IOCTL_KILL_PROCESS CTL_CODE_HIDE(1)
+#define IOCTL_REM_PROC_CALLBACK CTL_CODE_HIDE(2)
+#define IOCTL_LIST_PROC_CALLBACK CTL_CODE_HIDE(3)
 
 
 
 void UnloadMe(PDRIVER_OBJECT);
-NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp);
-NTSTATUS CreateClose(PDEVICE_OBJECT DeviceObject, PIRP Irp);
+NTSTATUS DeviceControl(PDEVICE_OBJECT, PIRP);
+NTSTATUS CreateClose(PDEVICE_OBJECT, PIRP);
+UINT64 FindKernelBase();
+//UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
+
+
+typedef enum _SYSTEM_INFORMATION_CLASS {
+    SystemBasicInformation = 0,
+    SystemPerformanceInformation = 2,
+    SystemTimeOfDayInformation = 3,
+    SystemProcessInformation = 5,
+    SystemProcessorPerformanceInformation = 8,
+    SystemInterruptInformation = 23,
+    SystemExceptionInformation = 33,
+    SystemRegistryQuotaInformation = 37,
+    SystemLookasideInformation = 45,
+    SystemCodeIntegrityInformation = 103,
+    SystemPolicyInformation = 134,
+} SYSTEM_INFORMATION_CLASS;
+
+// Structure used for returning module name and base address
+struct ModulesData {
+    CHAR ModuleName[256];
+    ULONG64 ModuleBase;
+};
+
+
+typedef struct _RTL_PROCESS_MODULE_INFORMATION
+{
+    ULONG Section;
+    PVOID MappedBase;
+    PVOID ImageBase;
+    ULONG ImageSize;
+    ULONG Flags;
+    USHORT LoadOrderIndex;
+    USHORT InitOrderIndex;
+    USHORT LoadCount;
+    USHORT OffsetToFileName;
+    CHAR FullPathName[256];
+} RTL_PROCESS_MODULE_INFORMATION, * PRTL_PROCESS_MODULE_INFORMATION;
+
+typedef struct _RTL_PROCESS_MODULES
+{
+    ULONG NumberOfModules;
+    RTL_PROCESS_MODULE_INFORMATION Modules[1];
+} RTL_PROCESS_MODULES, * PRTL_PROCESS_MODULES;
+
+
+typedef NTSTATUS(*PFN_ZwQuerySystemInformation)(
+    SYSTEM_INFORMATION_CLASS SystemInformationClass,
+    PVOID SystemInformation,
+    ULONG SystemInformationLength,
+    PULONG ReturnLength);
+
+
+typedef enum _NOTIFY_ROUTINE_TYPE {
+    ImageLoadCallback
+} NOTIFY_ROUTINE_TYPE;
+
+
+
+
+#ifndef SystemModuleInformation
+#define SystemModuleInformation 0xB
+#endif
+
+UINT64 FindKernelBase() {
+    UNICODE_STRING functionName;
+	PFN_ZwQuerySystemInformation querySysInfo;
+	NTSTATUS status;
+    ULONG requiredSize;
+    SIZE_T allocationSize;
+    UINT64 kernelBase = 0;
+    PRTL_PROCESS_MODULES moduleInfo = NULL;
+
+	RtlInitUnicodeString(&functionName, L"ZwQuerySystemInformation");
+
+	// dynamically get the address of ZwQuerySystemInformation
+	querySysInfo = (PFN_ZwQuerySystemInformation)MmGetSystemRoutineAddress(&functionName);
+
+	status = querySysInfo((SYSTEM_INFORMATION_CLASS)SystemModuleInformation, NULL, 0, &requiredSize);
+
+    if (status != STATUS_INFO_LENGTH_MISMATCH) {
+        DbgPrintEx(0, 0, "[%s] ZwQuerySystemInformation failed to get size (0x%X)\n", DRIVER_NAME, status);
+        return kernelBase;
+	}
+
+    allocationSize = requiredSize;
+    while (status == STATUS_INFO_LENGTH_MISMATCH) {
+        allocationSize += sizeof(ULONG);
+        moduleInfo = (PRTL_PROCESS_MODULES)ExAllocatePoolWithTag(NonPagedPoolNx, allocationSize, 'Tag1');
+        if (!moduleInfo) {
+            DbgPrintEx(0, 0, "[%s] ExAllocatePoolWithTag failed\n", DRIVER_NAME);
+            return kernelBase;
+        }
+        status = querySysInfo((SYSTEM_INFORMATION_CLASS)SystemModuleInformation, moduleInfo, (ULONG)allocationSize, &requiredSize);
+        if (status == STATUS_INFO_LENGTH_MISMATCH) {
+            ExFreePoolWithTag(moduleInfo, 'Tag1');
+            moduleInfo = NULL;
+        }
+    }
+    if (!NT_SUCCESS(status)) {
+        if (moduleInfo) {
+			ExFreePoolWithTag(moduleInfo, 'Tag1');
+        }
+        return kernelBase;
+	}
+	kernelBase = (UINT64)moduleInfo->Modules[0].ImageBase;
+    ExFreePoolWithTag(moduleInfo, 'Tag1');
+	return kernelBase;
+}
+
+
+NTSTATUS SearchModules(ULONG64 ModuleAddr, ModulesData* ModuleFound) {
+	NTSTATUS status = STATUS_SUCCESS;
+	ULONG modulesSize = 0;
+    AUX_MODULE_EXTENDED_INFO* modules = NULL;
+	ULONG numberOfModules = 0;
+
+
+	ModulesData ModuleFound2 = *ModuleFound;
+    // take info abt kernel drivers
+	status = AuxKlibQueryModuleInformation(&modulesSize, sizeof(AUX_MODULE_EXTENDED_INFO), NULL);
+
+    if (status != STATUS_INFO_LENGTH_MISMATCH) {
+        DbgPrintEx(0, 0, "[%s] AuxKlibQueryModuleInformation failed to get size (0x%X)\n", DRIVER_NAME, status);
+        return status;
+    }
+
+	numberOfModules = modulesSize / sizeof(AUX_MODULE_EXTENDED_INFO);
+
+	modules = (AUX_MODULE_EXTENDED_INFO*)ExAllocatePoolWithTag(PagedPool, modulesSize, L'CAZZOVUOI');
+    if (modules == NULL) {
+        DbgPrintEx(0, 0, "[%s] ExAllocatePoolWithTag failed\n", DRIVER_NAME);
+        return STATUS_INSUFFICIENT_RESOURCES;
+	}
+    // Query module information into the allocated buffer
+	status = AuxKlibQueryModuleInformation(&modulesSize, sizeof(AUX_MODULE_EXTENDED_INFO), modules);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(0, 0, "[%s] AuxKlibQueryModuleInformation failed (0x%X)\n", DRIVER_NAME, status);
+        ExFreePoolWithTag(modules, L'CAZZOVUOI');
+        return status;
+	}
+
+    for (int i = 0; i < numberOfModules; i++) {
+        if ((ModuleAddr > (ULONG64)modules[i].BasicInfo.ImageBase) && (ModuleAddr < ((ULONG64)modules[i].BasicInfo.ImageBase + modules[i].ImageSize))) {
+			DbgPrintEx(0, 0, "[%s] Found module: %s at base address: 0x%llx\n", DRIVER_NAME, &modules[i].FullPathName[modules[i].FileNameOffset], modules[i].BasicInfo.ImageBase);
+
+			strcpy(ModuleFound2.ModuleName, (CHAR*)(modules[i].FullPathName + modules[i].FileNameOffset));
+			*ModuleFound = ModuleFound2;
+
+			ExFreePoolWithTag(modules, L'CAZZOVUOI');
+			return status;
+        }
+    }
+
+	ExFreePoolWithTag(modules, L'CAZZOVUOI');
+	return status;
+
+}
+
+UINT64 FindProcNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
+    UINT64 routineAddress = 0;
+    UINT64 tempAddress = 0;
+    UINT64 notifyArrayAddress = 0;
+    UNICODE_STRING routineName;
+
+	RtlInitUnicodeString(&routineName, L"PsSetCreateProcessNotifyRoutine");
+
+    
+	routineAddress = (UINT64)MmGetSystemRoutineAddress(&routineName);
+    if(!routineAddress) {
+        DbgPrintEx(0, 0, "[%s] MmGetSystemRoutineAddress failed to get PsSetCreateProcessNotifyRoutine\n", DRIVER_NAME);
+        return 0;
+	}
+	// PRATICAMENTE TROVIAMO LA CALL A PspSetCreateProcessNotifyRoutine. PsSetCreateProcessNotifyRoutine FA UNA CALL A PspSetCreateProcessNotifyRoutine CHE A SUA VOLTA FA UNA LEA CHE CARICA L'INDIRIZZO DELL'ARRAY DI CALLBACK IN R13
+    for (int offset = 0; offset < 0x100; offset++) {
+		unsigned char instruction = *((unsigned char*)(routineAddress + offset));
+        if (instruction == 0xe9 || instruction == 0xe8) { // CALL or JMP
+			LONG relativeOffset = *((LONG*)(routineAddress + offset + 1));
+
+			tempAddress = routineAddress + offset + 5 + relativeOffset;
+            break;
+        }
+    }
+    if (!tempAddress) {
+        DbgPrintEx(0, 0, "[%s] Failed to find call/jmp instruction in PsSetCreateProcessNotifyRoutine\n", DRIVER_NAME);
+        return 0;
+	}
+
+    //effettivamente la prima lea di PspSetCreateProcessNotifyRoutine. carica in r13 l'indirizzo di PspCreateProcessNotifyRoutine
+
+    for (int offset = 0; offset < 300; offset++) {
+		unsigned char prefix = *((unsigned char*)(tempAddress + offset));
+        if ((prefix == 0x48 || prefix == 0x4C) && (*(unsigned char*)(tempAddress + offset + 1) == 0x8D)) { // LEA
+            LONG relativeOffset = *((LONG*)(tempAddress + offset + 3));
+
+            notifyArrayAddress = tempAddress + offset + 7 + relativeOffset;
+            break;
+        }
+    }
+
+	return notifyArrayAddress;
+}
 
 
 
@@ -132,7 +338,14 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         ZwClose(hProcess);
         break;
     }
-
+    case IOCTL_LIST_PROC_CALLBACK:
+    {
+        // Placeholder for listing process callbacks
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+            "[%s] IOCTL_LIST_PROC_CALLBACK not implemented.\n", DRIVER_NAME);
+        status = STATUS_NOT_IMPLEMENTED;
+        break;
+	}
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
         DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,
