@@ -1,10 +1,15 @@
 #include <ntifs.h>
-
+//#include <ntddk.h>
 #include <Aux_klib.h>
 
+
+#pragma once
+
+
 #define DRIVER_NAME "SnitchHunt"
+#define DRIVER_TAG 'cazz'
 
-
+#pragma comment(lib, "Aux_klib.lib")
 
 
 #define SYSTEM_DRV 0x8000
@@ -102,6 +107,11 @@ UINT64 FindKernelBase() {
 	// dynamically get the address of ZwQuerySystemInformation
 	querySysInfo = (PFN_ZwQuerySystemInformation)MmGetSystemRoutineAddress(&functionName);
 
+    if (!querySysInfo) {
+        DbgPrintEx(0, 0, "[%s] MmGetSystemRoutineAddress failed to get ZwQuerySystemInformation\n", DRIVER_NAME);
+        return kernelBase;
+	}
+
 	status = querySysInfo((SYSTEM_INFORMATION_CLASS)SystemModuleInformation, NULL, 0, &requiredSize);
 
     if (status != STATUS_INFO_LENGTH_MISMATCH) {
@@ -112,9 +122,9 @@ UINT64 FindKernelBase() {
     allocationSize = requiredSize;
     while (status == STATUS_INFO_LENGTH_MISMATCH) {
         allocationSize += sizeof(ULONG);
-        moduleInfo = (PRTL_PROCESS_MODULES)ExAllocatePoolWithTag(NonPagedPoolNx, allocationSize, 'Tag1');
+        moduleInfo = (PRTL_PROCESS_MODULES)ExAllocatePool2(POOL_FLAG_NON_PAGED, allocationSize, 'Tag1');
         if (!moduleInfo) {
-            DbgPrintEx(0, 0, "[%s] ExAllocatePoolWithTag failed\n", DRIVER_NAME);
+            DbgPrintEx(0, 0, "[%s] ExAllocatePool2 failed\n", DRIVER_NAME);
             return kernelBase;
         }
         status = querySysInfo((SYSTEM_INFORMATION_CLASS)SystemModuleInformation, moduleInfo, (ULONG)allocationSize, &requiredSize);
@@ -141,53 +151,79 @@ NTSTATUS SearchModules(ULONG64 ModuleAddr, ModulesData* ModuleFound) {
     AUX_MODULE_EXTENDED_INFO* modules = NULL;
 	ULONG numberOfModules = 0;
 
-
-	ModulesData ModuleFound2 = *ModuleFound;
+    // Step 1: Initialize the Auxiliary Kernel Library
+    status = AuxKlibInitialize();
+    if (!NT_SUCCESS(status))
+    {
+        DbgPrintEx(0, 0, "[%s] AuxKlibInitialize fail %d\n", DRIVER_NAME, status);
+        return status;
+    }	
+    
+    ModulesData ModuleFound2 = *ModuleFound;
     // take info abt kernel drivers
 	status = AuxKlibQueryModuleInformation(&modulesSize, sizeof(AUX_MODULE_EXTENDED_INFO), NULL);
 
-    if (status != STATUS_INFO_LENGTH_MISMATCH) {
+    if (!NT_SUCCESS(status) || modulesSize == 0) {
         DbgPrintEx(0, 0, "[%s] AuxKlibQueryModuleInformation failed to get size (0x%X)\n", DRIVER_NAME, status);
         return status;
     }
 
 	numberOfModules = modulesSize / sizeof(AUX_MODULE_EXTENDED_INFO);
 
-	modules = (AUX_MODULE_EXTENDED_INFO*)ExAllocatePoolWithTag(PagedPool, modulesSize, L'CAZZOVUOI');
+	modules = (AUX_MODULE_EXTENDED_INFO*)ExAllocatePool2(POOL_FLAG_PAGED, modulesSize, DRIVER_TAG);
     if (modules == NULL) {
-        DbgPrintEx(0, 0, "[%s] ExAllocatePoolWithTag failed\n", DRIVER_NAME);
+        DbgPrintEx(0, 0, "[%s] ExAllocatePool2 failed\n", DRIVER_NAME);
         return STATUS_INSUFFICIENT_RESOURCES;
 	}
     // Query module information into the allocated buffer
 	status = AuxKlibQueryModuleInformation(&modulesSize, sizeof(AUX_MODULE_EXTENDED_INFO), modules);
     if (!NT_SUCCESS(status)) {
         DbgPrintEx(0, 0, "[%s] AuxKlibQueryModuleInformation failed (0x%X)\n", DRIVER_NAME, status);
-        ExFreePoolWithTag(modules, L'CAZZOVUOI');
+        ExFreePoolWithTag(modules, DRIVER_TAG);
         return status;
 	}
 
-    for (int i = 0; i < numberOfModules; i++) {
+
+	DbgPrintEx(0, 0, "[%s] Searching for module containing address: 0x%llx\n", DRIVER_NAME, ModuleAddr);
+    for (ULONG i = 0; i < numberOfModules; i++) {
+   //     DbgPrintEx(0, 0, "[%s] Module %d: %s at base address: 0x%llx, size: 0x%x\n",
+   //         DRIVER_NAME,
+   //         i,
+   //         (PCSTR)&modules[i].FullPathName[modules[i].FileNameOffset],
+   //         (ULONG64)modules[i].BasicInfo.ImageBase,
+			//modules[i].ImageSize);
         if ((ModuleAddr > (ULONG64)modules[i].BasicInfo.ImageBase) && (ModuleAddr < ((ULONG64)modules[i].BasicInfo.ImageBase + modules[i].ImageSize))) {
-			DbgPrintEx(0, 0, "[%s] Found module: %s at base address: 0x%llx\n", DRIVER_NAME, &modules[i].FullPathName[modules[i].FileNameOffset], modules[i].BasicInfo.ImageBase);
+            //DbgPrintEx(0, 0, "[%s] Found module: %s at base address: 0x%llx\n",
+            //    DRIVER_NAME,
+            //    (PCSTR)&modules[i].FullPathName[modules[i].FileNameOffset],
+            //    (ULONG64)modules[i].BasicInfo.ImageBase);
+
 
 			strcpy(ModuleFound2.ModuleName, (CHAR*)(modules[i].FullPathName + modules[i].FileNameOffset));
 			*ModuleFound = ModuleFound2;
 
-			ExFreePoolWithTag(modules, L'CAZZOVUOI');
+			DbgPrintEx(0, 0, "[%s] Module name: %s\n", DRIVER_NAME, ModuleFound2.ModuleName);
+			ExFreePoolWithTag(modules, DRIVER_TAG);
 			return status;
         }
     }
 
-	ExFreePoolWithTag(modules, L'CAZZOVUOI');
+	ExFreePoolWithTag(modules, DRIVER_TAG);
 	return status;
 
 }
+
+
+//NTSTATUS
 
 UINT64 FindProcNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
     UINT64 routineAddress = 0;
     UINT64 tempAddress = 0;
     UINT64 notifyArrayAddress = 0;
     UNICODE_STRING routineName;
+
+	UNREFERENCED_PARAMETER(kernelBase);
+	UNREFERENCED_PARAMETER(callbackType);
 
 	RtlInitUnicodeString(&routineName, L"PsSetCreateProcessNotifyRoutine");
 
@@ -225,6 +261,37 @@ UINT64 FindProcNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callb
     }
 
 	return notifyArrayAddress;
+}
+
+
+void EnumProcRegisteredDrivers(UINT64 procNotifyArrayAddr) {
+    ModulesData moduleInfo = { 0 };
+    NTSTATUS status = STATUS_SUCCESS;
+    UINT64 callbackAddr = 0;
+    UINT64 tmpPtr = 0;
+    //LPVOID* 
+
+
+    
+    for (int i = 0; i < 64; i++) {
+        tmpPtr = procNotifyArrayAddr + i * 8;
+		callbackAddr = *(PUINT64)(tmpPtr);
+
+        //callbackAddr = *(callbackAddr & 0xfffffffffffffff8); // Mask to get the actual address (for x64 systems)
+
+		//DbgPrintEx(0, 0, "[%s] Process Notify Callback %d Address: 0x%llx\n", DRIVER_NAME, i, callbackAddr);
+
+		if (callbackAddr && MmIsAddressValid((PVOID)callbackAddr)) {
+			callbackAddr = *(PUINT64)(callbackAddr & 0xfffffffffffffff8); // Mask to get the actual address (for x64 systems)
+            status = SearchModules(callbackAddr, &moduleInfo);
+            if (NT_SUCCESS(status)) {
+                DbgPrintEx(0, 0, "[%s] Process Notify Callback %d: 0x%llx in module %s\n", DRIVER_NAME, i, callbackAddr, (PCSTR)moduleInfo.ModuleName);
+            }
+            else {
+                DbgPrintEx(0, 0, "[%s] Process Notify Callback %d: 0x%llx in unknown module\n", DRIVER_NAME, i, callbackAddr);
+            }
+        }
+	}
 }
 
 
@@ -286,6 +353,8 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 }
 
 
+
+
 NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
     UNREFERENCED_PARAMETER(DeviceObject);
@@ -341,10 +410,37 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     case IOCTL_LIST_PROC_CALLBACK:
     {
         // Placeholder for listing process callbacks
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-            "[%s] IOCTL_LIST_PROC_CALLBACK not implemented.\n", DRIVER_NAME);
-        status = STATUS_NOT_IMPLEMENTED;
-        break;
+		UINT64 kernelBase = FindKernelBase();
+        if (!kernelBase) {
+            DbgPrintEx(0, 0, "[%s] Failed to find kernel base\n", DRIVER_NAME);
+            status = STATUS_UNSUCCESSFUL;
+            break;
+		}
+
+        ULONG64 procNotifyArrayAddr = FindProcNotifyRoutineAddress(kernelBase, ImageLoadCallback);
+        if (!procNotifyArrayAddr) {
+            DbgPrintEx(0, 0, "[%s] Failed to find process notify routine address\n", DRIVER_NAME);
+            status = STATUS_UNSUCCESSFUL;
+            break;
+		}
+
+        //procNotifyArrayAddr = *(PULONG64)(procNotifyArrayAddr & 0xfffffffffffffff8);
+
+		DbgPrintEx(0, 0, "[%s] Process Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, procNotifyArrayAddr);
+
+		EnumProcRegisteredDrivers(procNotifyArrayAddr);
+
+		// send back packet with base address of procNotifyArrayAddr
+		ULONG_PTR* outputBuffer = (ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer;
+        if (outputBuffer && stack->Parameters.DeviceIoControl.OutputBufferLength >= sizeof(ULONG_PTR)) {
+            *outputBuffer = procNotifyArrayAddr;
+            info = sizeof(ULONG_PTR);
+            status = STATUS_SUCCESS;
+        }
+        else {
+            status = STATUS_BUFFER_TOO_SMALL;
+        }
+		break;
 	}
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;

