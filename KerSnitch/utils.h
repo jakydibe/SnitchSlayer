@@ -23,6 +23,8 @@
 #define IOCTL_KILL_PROCESS CTL_CODE_HIDE(1)
 #define IOCTL_REM_PROC_CALLBACK CTL_CODE_HIDE(2)
 #define IOCTL_LIST_PROC_CALLBACK CTL_CODE_HIDE(3)
+#define IOCTL_LIST_THREAD_CALLBACK CTL_CODE_HIDE(4)
+#define IOCTL_REM_THREAD_CALLBACK CTL_CODE_HIDE(5)
 
 
 
@@ -91,11 +93,12 @@ typedef enum _NOTIFY_ROUTINE_TYPE {
 } NOTIFY_ROUTINE_TYPE;
 
 
-ModulesData* EnumProcRegisteredDrivers(UINT64);
+ModulesData* EnumRegisteredDrivers(UINT64);
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
+UINT64 FindThreadNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 NTSTATUS SearchModules(ULONG64, ModulesData*);
 UINT64 FindKernelBase();
-NTSTATUS DeleteProcNotifyEntry(ULONG64, int);
+NTSTATUS DeleteNotifyEntry(ULONG64, int);
 
 #ifndef SystemModuleInformation
 #define SystemModuleInformation 0xB

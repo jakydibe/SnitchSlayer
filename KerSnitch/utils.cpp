@@ -2,7 +2,7 @@
 
 
 
-ModulesData* EnumProcRegisteredDrivers(UINT64 procNotifyArrayAddr) {
+ModulesData* EnumRegisteredDrivers(UINT64 NotifyArrayAddr) {
     ModulesData moduleInfo = { 0 };
     NTSTATUS status = STATUS_SUCCESS;
     UINT64 callbackAddr = 0;
@@ -20,7 +20,7 @@ ModulesData* EnumProcRegisteredDrivers(UINT64 procNotifyArrayAddr) {
 	int modulesCount = 0;
 
     for (int i = 0; i < 64; i++) {
-        tmpPtr = procNotifyArrayAddr + i * 8;
+        tmpPtr = NotifyArrayAddr + i * 8;
         callbackAddr = *(PUINT64)(tmpPtr);
 
         //callbackAddr = *(callbackAddr & 0xfffffffffffffff8); // Mask to get the actual address (for x64 systems)
@@ -32,17 +32,20 @@ ModulesData* EnumProcRegisteredDrivers(UINT64 procNotifyArrayAddr) {
             status = SearchModules(callbackAddr, &moduleInfo);
             if (NT_SUCCESS(status)) {
                 //DbgPrintEx(0, 0, "[%s] Process Notify Callback %d: 0x%llx in module %s\n", DRIVER_NAME, i, callbackAddr, (PCSTR)moduleInfo.ModuleName);
-				modules[modulesCount] = moduleInfo;
-				modulesCount++;
+				modules[i] = moduleInfo;
             }
             //else {
             //    //DbgPrintEx(0, 0, "[%s] Process Notify Callback %d: 0x%llx in unknown module\n", DRIVER_NAME, i, callbackAddr);
             //}
         }
+        modulesCount++;
+
     }
     // print modules to double check
 
     for (int j = 0; j < modulesCount; j++) {
+        if (modules[j].ModuleBase == 0)
+			continue;
         DbgPrintEx(0, 0, "[%s] Found Module %d: %s at base address: 0x%llx\n",
             DRIVER_NAME,
             j,
@@ -55,7 +58,52 @@ ModulesData* EnumProcRegisteredDrivers(UINT64 procNotifyArrayAddr) {
 	return modules;
 }
 
+UINT64 FindThreadNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
+    UINT64 routineAddress = 0;
+    UINT64 tempAddress = 0;
+    UINT64 notifyArrayAddress = 0;
+    UNICODE_STRING routineName;
 
+    UNREFERENCED_PARAMETER(kernelBase);
+    UNREFERENCED_PARAMETER(callbackType);
+
+    RtlInitUnicodeString(&routineName, L"PsSetCreateThreadNotifyRoutine");
+
+
+    routineAddress = (UINT64)MmGetSystemRoutineAddress(&routineName);
+    if (!routineAddress) {
+        DbgPrintEx(0, 0, "[%s] MmGetSystemRoutineAddress failed to get PsSetCreateThreadNotifyRoutine\n", DRIVER_NAME);
+        return 0;
+    }
+    // PRATICAMENTE TROVIAMO LA CALL A PspSetCreateThreadNotifyRoutine. PsSetCreateProcessNotifyRoutine FA UNA CALL A PsSetCreateThreadNotifyRoutine CHE A SUA VOLTA FA UNA LEA CHE CARICA L'INDIRIZZO DELL'ARRAY DI CALLBACK IN R13
+    for (int offset = 0; offset < 0x100; offset++) {
+        unsigned char instruction = *((unsigned char*)(routineAddress + offset));
+        if (instruction == 0xe9 || instruction == 0xe8) { // CALL or JMP
+            LONG relativeOffset = *((LONG*)(routineAddress + offset + 1));
+
+            tempAddress = routineAddress + offset + 5 + relativeOffset;
+            break;
+        }
+    }
+    if (!tempAddress) {
+        DbgPrintEx(0, 0, "[%s] Failed to find call/jmp instruction in PsSetCreateThreadNotifyRoutine\n", DRIVER_NAME);
+        return 0;
+    }
+
+    //effettivamente la prima lea di PspSetCreateProcessNotifyRoutine. carica in r13 l'indirizzo di PspCreateProcessNotifyRoutine
+
+    for (int offset = 0; offset < 300; offset++) {
+        unsigned char prefix = *((unsigned char*)(tempAddress + offset));
+        if ((prefix == 0x48 || prefix == 0x4C) && (*(unsigned char*)(tempAddress + offset + 1) == 0x8D)) { // LEA
+            LONG relativeOffset = *((LONG*)(tempAddress + offset + 3));
+
+            notifyArrayAddress = tempAddress + offset + 7 + relativeOffset;
+            break;
+        }
+    }
+
+    return notifyArrayAddress;
+}
 
 UINT64 FindProcNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
     UINT64 routineAddress = 0;
@@ -175,7 +223,7 @@ NTSTATUS SearchModules(ULONG64 ModuleAddr, ModulesData* ModuleFound) {
 }
 
 
-NTSTATUS DeleteProcNotifyEntry(ULONG64 procNotifyArrayAddr, int  indexToRemove) {
+NTSTATUS DeleteNotifyEntry(ULONG64 procNotifyArrayAddr, int  indexToRemove) {
 	*(ULONG64*)(procNotifyArrayAddr + indexToRemove * 8) = (ULONG64)0;
     if (*(ULONG64*)(procNotifyArrayAddr + indexToRemove * 8) == 0) {
         DbgPrintEx(0, 0, "[%s] Successfully removed entry at index %d\n", DRIVER_NAME, indexToRemove);
