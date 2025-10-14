@@ -27,7 +27,8 @@
 #define IOCTL_REM_THREAD_CALLBACK CTL_CODE_HIDE(5)
 #define IOCTL_LIST_LOAD_IMAGE_CALLBACK CTL_CODE_HIDE(6)
 #define IOCTL_REM_LOAD_IMAGE_CALLBACK CTL_CODE_HIDE(7)
-
+#define IOCTL_LIST_REG_CALLBACK CTL_CODE_HIDE(8)
+#define IOCTL_REM_REG_CALLBACK CTL_CODE_HIDE(9)
 
 
 
@@ -99,10 +100,12 @@ ModulesData* EnumRegisteredDrivers(UINT64);
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 UINT64 FindThreadNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 UINT64 FindLoadImageNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
+UINT64 FindRegCallbackNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 
 NTSTATUS SearchModules(ULONG64, ModulesData*);
 UINT64 FindKernelBase();
 NTSTATUS DeleteNotifyEntry(ULONG64, int);
+NTSTATUS DeleteRegCallbackEntry(ULONG64);
 
 
 #ifndef SystemModuleInformation

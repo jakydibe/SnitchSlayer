@@ -351,6 +351,46 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             status = STATUS_SUCCESS;
             break;
 		}
+        case IOCTL_LIST_REG_CALLBACK:
+        {
+			ULONG64 kernelBase = FindKernelBase();
+            if (!kernelBase) {
+                DbgPrintEx(0, 0, "[%s: LIST_REG] Failed to find kernel base\n", DRIVER_NAME);
+                status = STATUS_UNSUCCESSFUL;
+                break;
+            }
+            ULONG64 regNotifyArrayAddr = FindRegCallbackNotifyRoutineAddress(kernelBase, ImageLoadCallback);
+            if (!regNotifyArrayAddr) {
+                DbgPrintEx(0, 0, "[%s: LIST_REG] Failed to find registry notify routine address\n", DRIVER_NAME);
+                status = STATUS_UNSUCCESSFUL;
+                break;
+            }
+            DbgPrintEx(0, 0, "[%s: LIST_REG] Registry Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, regNotifyArrayAddr);
+
+            info = 0;
+			status = STATUS_SUCCESS;
+		}
+        case IOCTL_REM_REG_CALLBACK:
+        {
+            
+            ULONG64 kernelBase = FindKernelBase();
+            if (!kernelBase) {
+                DbgPrintEx(0, 0, "[%s: LIST_REG] Failed to find kernel base\n", DRIVER_NAME);
+                status = STATUS_UNSUCCESSFUL;
+                break;
+            }
+            ULONG64 regNotifyArrayAddr = FindRegCallbackNotifyRoutineAddress(kernelBase, ImageLoadCallback);
+            if (!regNotifyArrayAddr) {
+                DbgPrintEx(0, 0, "[%s: LIST_REG] Failed to find registry notify routine address\n", DRIVER_NAME);
+                status = STATUS_UNSUCCESSFUL;
+                break;
+            }
+            //procNotifyArrayAddr = *(PULONG64)(procNotifyArrayAddr & 0xfffffffffffffff8);
+            DbgPrintEx(0, 0, "[%s: LIST_REG] Registry Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, regNotifyArrayAddr);
+			status = DeleteRegCallbackEntry(regNotifyArrayAddr);
+            info = 0;
+            break;
+        }
         default:
             status = STATUS_INVALID_DEVICE_REQUEST;
             DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,

