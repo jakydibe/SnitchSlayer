@@ -212,13 +212,13 @@ void killer_callback(HANDLE hDevice) {
 
 BOOL ListProcNotifyRoutine(HANDLE hDevice) {
     DWORD bytesReturned;
-    ModulesDataArray* resultArray = { 0 };
+	ModulesData* resultArray = NULL;
 	ULONG64 modulesCount = 0;
 	BOOL result;
 
 
 
-	resultArray = (ModulesDataArray*)malloc(sizeof(ModulesData) * 64);
+	resultArray = (ModulesData*)malloc(sizeof(ModulesData) * 64);
 
     result = DeviceIoControl(
 		hDevice,
@@ -230,15 +230,20 @@ BOOL ListProcNotifyRoutine(HANDLE hDevice) {
 		&bytesReturned,
         NULL
 	);
-	if (!result || bytesReturned == 0 || resultArray->Modules == NULL) {
+	if (resultArray == NULL) {
         fprintf(stderr, "DeviceIoControl failed. Error: %lu\n", GetLastError());
-        free(resultArray->Modules);
+        free(resultArray);
         return FALSE;
 	}
-    for (size_t i = 0; i < bytesReturned / sizeof(ModulesData); i++) {
-        if (resultArray->Modules[i].ModuleBase == 0)
+    if (bytesReturned == 0) {
+        fprintf(stderr, "No data returned from driver.\n");
+        free(resultArray);
+        return FALSE;
+	}
+    for (size_t i = 0; i < 64; i++) {
+        if (resultArray[i].ModuleBase == 0)
 			break;
-        printf("Process Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray->Modules[i].ModuleName, resultArray->Modules[i].ModuleBase);
+        printf("Process Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
 	}
 
     return result;

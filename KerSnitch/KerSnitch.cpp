@@ -139,28 +139,39 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
         DbgPrintEx(0, 0, "[%s] Process Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, procNotifyArrayAddr);
 
-        ModulesDataArray modules = EnumProcRegisteredDrivers(procNotifyArrayAddr);
+        ModulesData* modules = EnumProcRegisteredDrivers(procNotifyArrayAddr);
 
 		// prima ritorno il numero di moduli cosi' che l'user mode allochi il buffer giusto
-		ULONG_PTR* outputBuffer = (ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer;
+		//ULONG_PTR* outputBuffer = (ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer;
         SIZE_T neededSize = sizeof(ModulesData) * 64;
 
-		DbgPrintEx(0, 0, "Number of valid modules: %llu\n", (unsigned long long)modules.Count);
+		/*DbgPrintEx(0, 0, "Number of valid modules: %llu\n", (unsigned long long)modules.Count);*/
 
-		memcpy(outputBuffer, &modules, neededSize);
 
-        if (outputBuffer && stack->Parameters.DeviceIoControl.OutputBufferLength >= sizeof(ULONG_PTR)) {
+		RtlCopyMemory((ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer, modules, neededSize);
+
+        for (int i = 0; i < 64; i++) {
+            if (modules[i].ModuleBase == 0)
+                break;
+            DbgPrintEx(0, 0, "[%s] Process Notify Callback %d: %s at base address 0x%llx\n", DRIVER_NAME, i, modules[i].ModuleName, modules[i].ModuleBase);
+        }
+
+		ExFreePool2(modules, DRIVER_TAG, NULL, 0);
+
+        //if (outputBuffer && stack->Parameters.DeviceIoControl.OutputBufferLength >= sizeof(ULONG_PTR)) {
             //*outputBuffer = modules;
-            status = STATUS_SUCCESS;
-            break;
-        }
-        else {
-            status = STATUS_BUFFER_TOO_SMALL;
-            break;
-        }
-        
-
+			// riempio bytesReturned con la size effettiva
+		info = neededSize;
+        status = STATUS_SUCCESS;
         break;
+        //}
+        //else {
+        //    status = STATUS_BUFFER_TOO_SMALL;
+        //    break;
+        //}
+        //
+
+        //break;
     }
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;

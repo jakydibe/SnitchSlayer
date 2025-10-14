@@ -2,7 +2,7 @@
 
 
 
-ModulesDataArray EnumProcRegisteredDrivers(UINT64 procNotifyArrayAddr) {
+ModulesData* EnumProcRegisteredDrivers(UINT64 procNotifyArrayAddr) {
     ModulesData moduleInfo = { 0 };
     NTSTATUS status = STATUS_SUCCESS;
     UINT64 callbackAddr = 0;
@@ -13,6 +13,10 @@ ModulesDataArray EnumProcRegisteredDrivers(UINT64 procNotifyArrayAddr) {
 	ModulesData* modules;
 
 	modules = (ModulesData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * 64, DRIVER_TAG);
+    if (modules == NULL) {
+        DbgPrintEx(0, 0, "[%s] ExAllocatePool2 failed\n", DRIVER_NAME);
+        return NULL;
+	}
 	int modulesCount = 0;
 
     for (int i = 0; i < 64; i++) {
@@ -27,18 +31,28 @@ ModulesDataArray EnumProcRegisteredDrivers(UINT64 procNotifyArrayAddr) {
             callbackAddr = *(PUINT64)(callbackAddr & 0xfffffffffffffff8); // Mask to get the actual address (for x64 systems)
             status = SearchModules(callbackAddr, &moduleInfo);
             if (NT_SUCCESS(status)) {
-                DbgPrintEx(0, 0, "[%s] Process Notify Callback %d: 0x%llx in module %s\n", DRIVER_NAME, i, callbackAddr, (PCSTR)moduleInfo.ModuleName);
+                //DbgPrintEx(0, 0, "[%s] Process Notify Callback %d: 0x%llx in module %s\n", DRIVER_NAME, i, callbackAddr, (PCSTR)moduleInfo.ModuleName);
 				modules[modulesCount] = moduleInfo;
 				modulesCount++;
             }
-            else {
-                DbgPrintEx(0, 0, "[%s] Process Notify Callback %d: 0x%llx in unknown module\n", DRIVER_NAME, i, callbackAddr);
-            }
+            //else {
+            //    //DbgPrintEx(0, 0, "[%s] Process Notify Callback %d: 0x%llx in unknown module\n", DRIVER_NAME, i, callbackAddr);
+            //}
         }
     }
-	result.Modules = modules;
-    result.Count = modulesCount;
-	return result;
+    // print modules to double check
+
+    for (int j = 0; j < modulesCount; j++) {
+        DbgPrintEx(0, 0, "[%s] Found Module %d: %s at base address: 0x%llx\n",
+            DRIVER_NAME,
+            j,
+            (PCSTR)modules[j].ModuleName,
+            (ULONG64)modules[j].ModuleBase);
+	}
+
+
+
+	return modules;
 }
 
 
@@ -146,6 +160,7 @@ NTSTATUS SearchModules(ULONG64 ModuleAddr, ModulesData* ModuleFound) {
 
 
             strcpy(ModuleFound2.ModuleName, (CHAR*)(modules[i].FullPathName + modules[i].FileNameOffset));
+			memcpy(&ModuleFound2.ModuleBase, &modules[i].BasicInfo.ImageBase, sizeof(ULONG64));
             *ModuleFound = ModuleFound2;
 
             DbgPrintEx(0, 0, "[%s] Module name: %s\n", DRIVER_NAME, ModuleFound2.ModuleName);

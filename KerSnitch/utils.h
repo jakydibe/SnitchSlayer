@@ -91,7 +91,7 @@ typedef enum _NOTIFY_ROUTINE_TYPE {
 } NOTIFY_ROUTINE_TYPE;
 
 
-ModulesDataArray EnumProcRegisteredDrivers(UINT64);
+ModulesData* EnumProcRegisteredDrivers(UINT64);
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 NTSTATUS SearchModules(ULONG64, ModulesData*);
 UINT64 FindKernelBase();
