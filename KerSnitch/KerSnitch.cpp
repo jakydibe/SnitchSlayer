@@ -285,6 +285,72 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             break;
             
         }
+        case IOCTL_LIST_LOAD_IMAGE_CALLBACK:
+        {
+			UINT64 kernelBase = FindKernelBase();
+            if (!kernelBase) {
+                DbgPrintEx(0, 0, "[%s: LIST_LOAD_IMAGE] Failed to find kernel base\n", DRIVER_NAME);
+                status = STATUS_UNSUCCESSFUL;
+                break;
+            }
+            ULONG64 loadImageNotifyArrayAddr = FindLoadImageNotifyRoutineAddress(kernelBase, ImageLoadCallback);
+            if (!loadImageNotifyArrayAddr) {
+                DbgPrintEx(0, 0, "[%s: LIST_LOAD_IMAGE] Failed to find load image notify routine address\n", DRIVER_NAME);
+                status = STATUS_UNSUCCESSFUL;
+                break;
+            }
+            //procNotifyArrayAddr = *(PULONG64)(procNotifyArrayAddr & 0xfffffffffffffff8);
+            DbgPrintEx(0, 0, "[%s: LIST_LOAD_IMAGE] Load Image Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, loadImageNotifyArrayAddr);
+            ModulesData* modules = EnumRegisteredDrivers(loadImageNotifyArrayAddr);
+            SIZE_T neededSize = sizeof(ModulesData) * 64;
+            RtlCopyMemory((ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer, modules, neededSize);
+            for (int i = 0; i < 64; i++) {
+                if (modules[i].ModuleBase == 0)
+                    continue;
+                DbgPrintEx(0, 0, "[%s] Load Image Notify Callback %d: %s at base address 0x%llx\n", DRIVER_NAME, i, modules[i].ModuleName, modules[i].ModuleBase);
+            }
+            ExFreePool2(modules, DRIVER_TAG, NULL, 0);
+            info = neededSize;
+            status = STATUS_SUCCESS;
+			break;
+		}
+        case IOCTL_REM_LOAD_IMAGE_CALLBACK:
+            {
+            CHAR* moduleToRemove = (CHAR*)Irp->AssociatedIrp.SystemBuffer;
+            int indexToRemove = -1;
+            UINT64 kernelBase = FindKernelBase();
+            if (!kernelBase) {
+                DbgPrintEx(0, 0, "[%s: REM_LOAD_IMAGE] Failed to find kernel base\n", DRIVER_NAME);
+                status = STATUS_UNSUCCESSFUL;
+            }
+            ULONG64 loadImageNotifyArrayAddr = FindLoadImageNotifyRoutineAddress(kernelBase, ImageLoadCallback);
+            if (!loadImageNotifyArrayAddr) {
+                DbgPrintEx(0, 0, "[%s: REM_LOAD_IMAGE] Failed to find load image notify routine address\n", DRIVER_NAME);
+                status = STATUS_UNSUCCESSFUL;
+                break;
+            }
+            DbgPrintEx(0, 0, "[%s: REM_LOAD_IMAGE] Load Image Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, loadImageNotifyArrayAddr);
+            ModulesData* modules = EnumRegisteredDrivers(loadImageNotifyArrayAddr);
+            for (size_t i = 0; i < 64; i++) {
+                if (modules[i].ModuleBase == 0)
+                    continue;
+                if (_stricmp(modules[i].ModuleName, moduleToRemove) == 0) {
+                    indexToRemove = (int)i;
+                    break;
+                }
+            }
+            if (indexToRemove == -1) {
+                DbgPrintEx(0, 0, "[%s: REM_LOAD_IMAGE] Module %s not found in load image notify routines\n", DRIVER_NAME, moduleToRemove);
+                ExFreePool2(modules, DRIVER_TAG, NULL, 0);
+                status = STATUS_NOT_FOUND;
+                break;
+            }
+            DeleteNotifyEntry(loadImageNotifyArrayAddr, indexToRemove);
+            ExFreePool2(modules, DRIVER_TAG, NULL, 0);
+            info = 0;
+            status = STATUS_SUCCESS;
+            break;
+		}
         default:
             status = STATUS_INVALID_DEVICE_REQUEST;
             DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,

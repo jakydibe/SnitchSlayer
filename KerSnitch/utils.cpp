@@ -58,52 +58,6 @@ ModulesData* EnumRegisteredDrivers(UINT64 NotifyArrayAddr) {
 	return modules;
 }
 
-UINT64 FindThreadNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
-    UINT64 routineAddress = 0;
-    UINT64 tempAddress = 0;
-    UINT64 notifyArrayAddress = 0;
-    UNICODE_STRING routineName;
-
-    UNREFERENCED_PARAMETER(kernelBase);
-    UNREFERENCED_PARAMETER(callbackType);
-
-    RtlInitUnicodeString(&routineName, L"PsSetCreateThreadNotifyRoutine");
-
-
-    routineAddress = (UINT64)MmGetSystemRoutineAddress(&routineName);
-    if (!routineAddress) {
-        DbgPrintEx(0, 0, "[%s] MmGetSystemRoutineAddress failed to get PsSetCreateThreadNotifyRoutine\n", DRIVER_NAME);
-        return 0;
-    }
-    // PRATICAMENTE TROVIAMO LA CALL A PspSetCreateThreadNotifyRoutine. PsSetCreateProcessNotifyRoutine FA UNA CALL A PsSetCreateThreadNotifyRoutine CHE A SUA VOLTA FA UNA LEA CHE CARICA L'INDIRIZZO DELL'ARRAY DI CALLBACK IN R13
-    for (int offset = 0; offset < 0x100; offset++) {
-        unsigned char instruction = *((unsigned char*)(routineAddress + offset));
-        if (instruction == 0xe9 || instruction == 0xe8) { // CALL or JMP
-            LONG relativeOffset = *((LONG*)(routineAddress + offset + 1));
-
-            tempAddress = routineAddress + offset + 5 + relativeOffset;
-            break;
-        }
-    }
-    if (!tempAddress) {
-        DbgPrintEx(0, 0, "[%s] Failed to find call/jmp instruction in PsSetCreateThreadNotifyRoutine\n", DRIVER_NAME);
-        return 0;
-    }
-
-    //effettivamente la prima lea di PspSetCreateProcessNotifyRoutine. carica in r13 l'indirizzo di PspCreateProcessNotifyRoutine
-
-    for (int offset = 0; offset < 300; offset++) {
-        unsigned char prefix = *((unsigned char*)(tempAddress + offset));
-        if ((prefix == 0x48 || prefix == 0x4C) && (*(unsigned char*)(tempAddress + offset + 1) == 0x8D)) { // LEA
-            LONG relativeOffset = *((LONG*)(tempAddress + offset + 3));
-
-            notifyArrayAddress = tempAddress + offset + 7 + relativeOffset;
-            break;
-        }
-    }
-
-    return notifyArrayAddress;
-}
 
 UINT64 FindProcNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
     UINT64 routineAddress = 0;
@@ -152,6 +106,99 @@ UINT64 FindProcNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callb
     return notifyArrayAddress;
 }
 
+UINT64 FindThreadNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
+    UINT64 routineAddress = 0;
+    UINT64 tempAddress = 0;
+    UINT64 notifyArrayAddress = 0;
+    UNICODE_STRING routineName;
+
+    UNREFERENCED_PARAMETER(kernelBase);
+    UNREFERENCED_PARAMETER(callbackType);
+
+    RtlInitUnicodeString(&routineName, L"PsSetCreateThreadNotifyRoutine");
+
+
+    routineAddress = (UINT64)MmGetSystemRoutineAddress(&routineName);
+    if (!routineAddress) {
+        DbgPrintEx(0, 0, "[%s] MmGetSystemRoutineAddress failed to get PsSetCreateThreadNotifyRoutine\n", DRIVER_NAME);
+        return 0;
+    }
+    // PRATICAMENTE TROVIAMO LA CALL A PspSetCreateThreadNotifyRoutine. PsSetCreateProcessNotifyRoutine FA UNA CALL A PsSetCreateThreadNotifyRoutine CHE A SUA VOLTA FA UNA LEA CHE CARICA L'INDIRIZZO DELL'ARRAY DI CALLBACK IN R13
+    for (int offset = 0; offset < 0x100; offset++) {
+        unsigned char instruction = *((unsigned char*)(routineAddress + offset));
+        if (instruction == 0xe9 || instruction == 0xe8) { // CALL or JMP
+            LONG relativeOffset = *((LONG*)(routineAddress + offset + 1));
+
+            tempAddress = routineAddress + offset + 5 + relativeOffset;
+            break;
+        }
+    }
+    if (!tempAddress) {
+        DbgPrintEx(0, 0, "[%s] Failed to find call/jmp instruction in PsSetCreateThreadNotifyRoutine\n", DRIVER_NAME);
+        return 0;
+    }
+
+    //effettivamente la prima lea di PspSetCreateProcessNotifyRoutine. carica in r13 l'indirizzo di PspCreateProcessNotifyRoutine
+
+    for (int offset = 0; offset < 300; offset++) {
+        unsigned char prefix = *((unsigned char*)(tempAddress + offset));
+        if ((prefix == 0x48 || prefix == 0x4C) && (*(unsigned char*)(tempAddress + offset + 1) == 0x8D)) { // LEA
+            LONG relativeOffset = *((LONG*)(tempAddress + offset + 3));
+
+            notifyArrayAddress = tempAddress + offset + 7 + relativeOffset;
+            break;
+        }
+    }
+
+    return notifyArrayAddress;
+}
+
+// here the first call calls PsSetLoadImageNotifyRoutineEx, also the first LEA of PspSetLoadImageNotifyRoutineEx loads in R13 the address of the array of callbacks
+UINT64 FindLoadImageNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
+    UINT64 routineAddress = 0;
+    UINT64 tempAddress = 0;
+    UINT64 notifyArrayAddress = 0;
+    UNICODE_STRING routineName;
+
+    UNREFERENCED_PARAMETER(kernelBase);
+    UNREFERENCED_PARAMETER(callbackType);
+
+    RtlInitUnicodeString(&routineName, L"PsSetLoadImageNotifyRoutine");
+
+    
+    routineAddress = (UINT64)MmGetSystemRoutineAddress(&routineName);
+    if (!routineAddress) {
+        DbgPrintEx(0, 0, "[%s] MmGetSystemRoutineAddress failed to get PsSetLoadImageNotifyRoutine\n", DRIVER_NAME);
+        return 0;
+    }
+    // PRATICAMENTE TROVIAMO LA CALL A PspSetCreateThreadNotifyRoutine. PsSetLoadImageNotifyRoutine FA UNA CALL A PsSetLoadImageNotifyRoutineEx CHE A SUA VOLTA FA UNA LEA CHE CARICA L'INDIRIZZO DELL'ARRAY DI CALLBACK IN R13
+    for (int offset = 0; offset < 0x100; offset++) {
+        unsigned char instruction = *((unsigned char*)(routineAddress + offset));
+        if (instruction == 0xe9 || instruction == 0xe8) { // CALL or JMP
+            LONG relativeOffset = *((LONG*)(routineAddress + offset + 1));
+
+            tempAddress = routineAddress + offset + 5 + relativeOffset;
+            break;
+        }
+    }
+    if (!tempAddress) {
+        DbgPrintEx(0, 0, "[%s] Failed to find call/jmp instruction in PsSetLoadImageNotifyRoutine\n", DRIVER_NAME);
+        return 0;
+    }
+
+
+    for (int offset = 0; offset < 300; offset++) {
+        unsigned char prefix = *((unsigned char*)(tempAddress + offset));
+        if ((prefix == 0x48 || prefix == 0x4C) && (*(unsigned char*)(tempAddress + offset + 1) == 0x8D)) { // LEA
+            LONG relativeOffset = *((LONG*)(tempAddress + offset + 3));
+
+            notifyArrayAddress = tempAddress + offset + 7 + relativeOffset;
+            break;
+        }
+    }
+
+    return notifyArrayAddress;
+}
 
 NTSTATUS SearchModules(ULONG64 ModuleAddr, ModulesData* ModuleFound) {
     NTSTATUS status = STATUS_SUCCESS;

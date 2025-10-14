@@ -25,6 +25,8 @@
 #define IOCTL_LIST_PROC_CALLBACK CTL_CODE_HIDE(3)
 #define IOCTL_LIST_THREAD_CALLBACK CTL_CODE_HIDE(4)
 #define IOCTL_REM_THREAD_CALLBACK CTL_CODE_HIDE(5)
+#define IOCTL_LIST_LOAD_IMAGE_CALLBACK CTL_CODE_HIDE(6)
+#define IOCTL_REM_LOAD_IMAGE_CALLBACK CTL_CODE_HIDE(7)
 
 
 
@@ -96,9 +98,12 @@ typedef enum _NOTIFY_ROUTINE_TYPE {
 ModulesData* EnumRegisteredDrivers(UINT64);
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 UINT64 FindThreadNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
+UINT64 FindLoadImageNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
+
 NTSTATUS SearchModules(ULONG64, ModulesData*);
 UINT64 FindKernelBase();
 NTSTATUS DeleteNotifyEntry(ULONG64, int);
+
 
 #ifndef SystemModuleInformation
 #define SystemModuleInformation 0xB
