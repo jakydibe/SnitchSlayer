@@ -95,6 +95,7 @@ ModulesData* EnumProcRegisteredDrivers(UINT64);
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 NTSTATUS SearchModules(ULONG64, ModulesData*);
 UINT64 FindKernelBase();
+NTSTATUS DeleteProcNotifyEntry(ULONG64, int);
 
 #ifndef SystemModuleInformation
 #define SystemModuleInformation 0xB

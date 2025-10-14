@@ -85,7 +85,9 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     }
     case IOCTL_REM_PROC_CALLBACK:
     {
-        // Placeholder for listing process callbacks
+
+		CHAR* moduleToRemove = (CHAR*)Irp->AssociatedIrp.SystemBuffer;
+		int indexToRemove = -1;
         UINT64 kernelBase = FindKernelBase();
         if (!kernelBase) {
             DbgPrintEx(0, 0, "[%s] Failed to find kernel base\n", DRIVER_NAME);
@@ -104,19 +106,41 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
         DbgPrintEx(0, 0, "[%s] Process Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, procNotifyArrayAddr);
 
-        EnumProcRegisteredDrivers(procNotifyArrayAddr);
+        ModulesData* modules = EnumProcRegisteredDrivers(procNotifyArrayAddr);
 
-        // send back packet with base address of procNotifyArrayAddr
-        ULONG_PTR* outputBuffer = (ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer;
-        if (outputBuffer && stack->Parameters.DeviceIoControl.OutputBufferLength >= sizeof(ULONG_PTR)) {
-            *outputBuffer = procNotifyArrayAddr;
-            info = sizeof(ULONG_PTR);
-            status = STATUS_SUCCESS;
-        }
-        else {
-            status = STATUS_BUFFER_TOO_SMALL;
-        }
+        for (size_t i = 0; i < 64; i++) {
+            if (modules[i].ModuleBase == 0)
+                break;
+            if (_stricmp(modules[i].ModuleName, moduleToRemove) == 0) {
+                indexToRemove = (int)i;
+                break;
+            }
+		}
+
+        if (indexToRemove == -1) {
+            DbgPrintEx(0, 0, "[%s] Module %s not found in process notify routines\n", DRIVER_NAME, moduleToRemove);
+            ExFreePool2(modules, DRIVER_TAG, NULL, 0);
+            status = STATUS_NOT_FOUND;
+            break;
+		}
+        DeleteProcNotifyEntry(procNotifyArrayAddr, indexToRemove);
+        // prima ritorno il numero di moduli cosi' che l'user mode allochi il buffer giusto
+        //ULONG_PTR* outputBuffer = (ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer;
+        //SIZE_T neededSize = sizeof(ModulesData) * 64;
+
+        /*DbgPrintEx(0, 0, "Number of valid modules: %llu\n", (unsigned long long)modules.Count);*/
+
+        
+
+        ExFreePool2(modules, DRIVER_TAG, NULL, 0);
+
+        //if (outputBuffer && stack->Parameters.DeviceIoControl.OutputBufferLength >= sizeof(ULONG_PTR)) {
+            //*outputBuffer = modules;
+            // riempio bytesReturned con la size effettiva
+        info = 0;
+        status = STATUS_SUCCESS;
         break;
+        //}
 	}
     case IOCTL_LIST_PROC_CALLBACK:
     {

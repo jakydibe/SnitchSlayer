@@ -175,6 +175,18 @@ NTSTATUS SearchModules(ULONG64 ModuleAddr, ModulesData* ModuleFound) {
 }
 
 
+NTSTATUS DeleteProcNotifyEntry(ULONG64 procNotifyArrayAddr, int  indexToRemove) {
+	*(ULONG64*)(procNotifyArrayAddr + indexToRemove * 8) = (ULONG64)0;
+    if (*(ULONG64*)(procNotifyArrayAddr + indexToRemove * 8) == 0) {
+        DbgPrintEx(0, 0, "[%s] Successfully removed entry at index %d\n", DRIVER_NAME, indexToRemove);
+        return STATUS_SUCCESS;
+    }
+    else {
+        DbgPrintEx(0, 0, "[%s] Failed to remove entry at index %d\n", DRIVER_NAME, indexToRemove);
+        return STATUS_UNSUCCESSFUL;
+	}
+}
+
 UINT64 FindKernelBase() {
     UNICODE_STRING functionName;
     PFN_ZwQuerySystemInformation querySysInfo;

