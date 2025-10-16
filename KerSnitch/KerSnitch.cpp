@@ -402,11 +402,14 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         }
         case IOCTL_UMPROC_HIDE:
         {
-			hideProcArgs args = *(hideProcArgs*)Irp->AssociatedIrp.SystemBuffer;
+			DbgPrintEx(0, 0, "[%s] Hiding user-mode process\n", DRIVER_NAME);
+            hideProcArgs args = *(hideProcArgs*)Irp->AssociatedIrp.SystemBuffer;
 
 			DWORD pidVal = args.pid;
-            int offset = args.offset;
+            DWORD offset = args.offset;
+			DbgPrintEx(0, 0, "[%s] Hiding process with PID %d using offset 0x%d\n", DRIVER_NAME, (unsigned long)pidVal, offset);
             //int offset = 0x448; // Windows 10 22H2 x64 offset
+
             status = procHiding(pidVal, offset);
             if (!NT_SUCCESS(status)) {
                 DbgPrintEx(0, 0, "[%s] Failed to hide process with PID %lu\n", DRIVER_NAME, (unsigned long)pidVal);

