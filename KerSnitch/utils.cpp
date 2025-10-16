@@ -132,6 +132,45 @@ NTSTATUS crashProcess(ULONG_PTR pidVal) {
     return STATUS_SUCCESS;
 }
 
+NTSTATUS unmapProcess(ULONG_PTR pidVal) {
+    NTSTATUS status;
+    PEPROCESS eProcess = NULL;
+	PVOID baseAddress = 0;
+    status = PsLookupProcessByProcessId((HANDLE)pidVal, &eProcess);
+
+    PFN_PsGetProcessSectionBaseAddress pPsGetProcessSectionBaseAddress = NULL;
+    PFN_MmUnmapViewOfSection pMmUnmapViewOfSection = NULL;
+
+	UNICODE_STRING routineName;
+
+	RtlInitUnicodeString(&routineName, L"PsGetProcessSectionBaseAddress");
+
+	pPsGetProcessSectionBaseAddress = (PFN_PsGetProcessSectionBaseAddress)MmGetSystemRoutineAddress(&routineName);
+
+	RtlInitUnicodeString(&routineName, L"MmUnmapViewOfSection");
+
+	pMmUnmapViewOfSection = (PFN_MmUnmapViewOfSection)MmGetSystemRoutineAddress(&routineName);
+
+	baseAddress = (PVOID)pPsGetProcessSectionBaseAddress(eProcess);
+
+
+	status = pMmUnmapViewOfSection(eProcess, baseAddress);
+
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL,
+            "[%s] MmUnmapViewOfSection failed for PID %llu (0x%08X)\n",
+            DRIVER_NAME, (unsigned long long)pidVal, status);
+        return STATUS_UNSUCCESSFUL;
+    }
+    else {
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
+            "[%s] Unmapped section of PID %llu\n",
+            DRIVER_NAME, (unsigned long long)pidVal);
+    }
+    ObDereferenceObject(eProcess);
+	return STATUS_SUCCESS;
+}
+
 ModulesData* EnumRegisteredDrivers(UINT64 NotifyArrayAddr) {
     ModulesData moduleInfo = { 0 };
     NTSTATUS status = STATUS_SUCCESS;
