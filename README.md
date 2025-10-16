@@ -1,5 +1,7 @@
 # SnitchSlayer
 
+![alt text](image.png)
+
 **SnitchSlayer** is a windows kernel mode rootkit with many functionalities.
 
 Its main objective is making the snitches (Antiviruses/EDRs) shut up or kill them.
