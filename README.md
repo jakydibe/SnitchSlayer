@@ -26,8 +26,22 @@ Its main objective is making the snitches (Antiviruses/EDRs) shut up or kill the
 6) Hiding a UserMode process from processes linked list.
 7) Hiding kernel driver from drivers linked list.
 
+# Usage
+
+## Temporary
 
 
+### Starting the Driver
+Right now it is not implements as a single executable so the driver needs to be loaded manually.
+
+1) `sc create sh type=Kernel binPath=<path_to_KerSnitch.sys>`
+2) `sc start sh`
+
+### Starting the UM Application
+
+1) `.\SnitchHater.exe`
+2) `help` to display all functionalities and commands 
+![alt text](image-1.png)
 
 
 ## TO:DO
