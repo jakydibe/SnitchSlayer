@@ -444,6 +444,16 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 			}
             break;
         }
+        case IOCTL_WIN_ETW_DISABLE:
+        {
+            disKerETWArgs args = *(disKerETWArgs*)Irp->AssociatedIrp.SystemBuffer;
+
+            ULONG64 kernelBase = FindKernelBase();
+
+            disablingWTI(kernelBase, args);
+
+
+        }
         default:
             status = STATUS_INVALID_DEVICE_REQUEST;
             DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,

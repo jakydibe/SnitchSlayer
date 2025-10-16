@@ -53,6 +53,7 @@ Right now it is not implements as a single executable so the driver needs to be 
 5) Implementing Credential Guard bypass for LSASS dump.
 6) Disabling kernel Mode ETW providers.
 7) Implementing driver loading at runtime from resources instead of manually loading with sc.exe.
+8) disabling user mode ETW providers for a process (idk inject a dll on that process or create a remote thread idk).
 
 # Disclaimer
 
@@ -61,3 +62,5 @@ I do not condone abusing this. This is just for research purpose only.
 Also is the first time i write windows kernel driver so it may(and for sure has) have many instabilities leading to BSOD so don't use it in ur malware campaign, its useless.
 
 I will not explain how to load an unsigned kernel driver. 
+
+thanks to https://github.com/gmh5225/PDB-EasyPdb/ for the offset resolving with pdb 
