@@ -18,5 +18,19 @@
     <ClCompile Include="snitchHater.cpp">
       <Filter>File di risorse</Filter>
     </ClCompile>
+    <ClCompile Include="md5.cpp">
+      <Filter>File di origine</Filter>
+    </ClCompile>
+    <ClCompile Include="EzPdb.cpp">
+      <Filter>File di origine</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="md5.h">
+      <Filter>File di origine</Filter>
+    </ClInclude>
+    <ClInclude Include="EzPdb.h">
+      <Filter>File di origine</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

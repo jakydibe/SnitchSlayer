@@ -48,7 +48,7 @@ Right now it is not implements as a single executable so the driver needs to be 
 
 1) Improving Object/Registry kernel callbacks removal.
 2) Implementing MiniFilter kernel callbacks removal.
-3) Switching to offset finding through PDB files downloaded at runtime.
+3) ~~Switching to offset finding through PDB files downloaded at runtime.~~
 4) Implementing more Function resolving at Runtime (Like ZwTerminateProcess).
 5) Implementing Credential Guard bypass for LSASS dump.
 6) Disabling kernel Mode ETW providers.
