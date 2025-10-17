@@ -521,20 +521,169 @@ NTSTATUS DeleteNotifyEntry(ULONG64 procNotifyArrayAddr, int  indexToRemove) {
 	}
 }
 
-
-NTSTATUS DeleteRegCallbackEntry(ULONG64 regCallbackArrayAddr) {
-	LIST_ENTRY* listHead = (LIST_ENTRY*)regCallbackArrayAddr;
-    listHead->Flink = listHead;
-	listHead->Blink = listHead;
-
-    if (listHead->Flink == listHead && listHead->Blink == listHead) {
-        DbgPrintEx(0, 0, "[%s] Successfully removed registry callback entry\n", DRIVER_NAME);
-        return STATUS_SUCCESS;
+ModulesData* EnumRegCallbackDrivers(ULONG64 regNotifyArrayAddr)
+{
+    if (regNotifyArrayAddr == 0) {
+        return NULL;
     }
-    else {
-        DbgPrintEx(0, 0, "[%s] Failed to remove registry callback entry\n", DRIVER_NAME);
-        return STATUS_UNSUCCESSFUL;
-	}
+
+    // massimale: 64 elementi (come nel tuo codice)
+    const int kMax = 64;
+    int counter = 0;
+    NTSTATUS status = STATUS_UNSUCCESSFUL;
+
+    ModulesData tmpMod = { 0 };
+
+    ModulesData* moduleDatas = (ModulesData*)
+        ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * kMax, DRIVER_TAG);
+    if (!moduleDatas) {
+        return NULL;
+    }
+    RtlZeroMemory(moduleDatas, sizeof(ModulesData) * kMax);
+
+    // head per riconoscere quando chiudere il giro della lista
+    PREGISTRY_CALLBACK_ITEM head = (PREGISTRY_CALLBACK_ITEM)regNotifyArrayAddr;
+
+    // puntatore corrente
+    PREGISTRY_CALLBACK_ITEM curr = head;
+
+    // loop con protezioni
+    while (counter < kMax) {
+        // Proteggi l’accesso a campi potenzialmente corrotti
+        __try {
+            // Verifica che l’indirizzo di curr sia valido
+            if (!MmIsAddressValid(curr)) break;
+
+            // Leggi la function pointer del callback
+            ULONG64 cbFunc = curr->Function;
+
+            // Se l’indirizzo della funzione non è plausibile, salta/segna vuoto
+            if (cbFunc == 0 || !MmIsAddressValid((PVOID)cbFunc)) {
+                RtlZeroMemory(&moduleDatas[counter], sizeof(ModulesData));
+            }
+            else {
+                // Risolvi il modulo contenente cbFunc
+                status = SearchModules(cbFunc, &tmpMod);
+                if (NT_SUCCESS(status)) {
+                    moduleDatas[counter] = tmpMod;
+                }
+                else {
+                    RtlZeroMemory(&moduleDatas[counter], sizeof(ModulesData));
+                }
+            }
+
+            // Avanza al prossimo elemento della lista
+            PLIST_ENTRY flink = curr->Item.Flink;
+
+            // Controlli di consistenza sul link
+            if (flink == NULL) break;                          // lista rotta
+            if (!MmIsAddressValid(flink)) break;               // link invalido
+            if (flink == &curr->Item) break;                   // self-loop anomalo
+
+            // Se torniamo alla head, abbiamo completato il giro
+            if (flink == &head->Item) {
+                counter++;
+                break;
+            }
+
+            // Siccome Item è il primo campo, l’indirizzo della struct coincide con quello di Item
+            curr = (PREGISTRY_CALLBACK_ITEM)flink;
+
+            counter++;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            // Qualsiasi AV o accesso invalido finisce qui: usciamo pulitamente
+            break;
+        }
+    }
+
+    // Se vuoi, potresti restituire anche il numero valido (counter) via out-param.
+    // Qui mantengo la tua firma e lascio gli slot non usati a zero.
+    return moduleDatas;
+}
+
+NTSTATUS DeleteRegCallbackEntry(ULONG64 regNotifyArrayAddr, CHAR* moduleName)
+{
+    if (regNotifyArrayAddr == 0 || moduleName == NULL || moduleName[0] == '\0')
+        return STATUS_INVALID_PARAMETER;
+
+    // ATTENZIONE: questa operazione è altamente rischiosa.
+    // Stai manipolando una lista mantenuta dal Configuration Manager.
+    // Fallo solo in laboratorio e consapevole che puoi causare bugcheck.
+
+    NTSTATUS status = STATUS_NOT_FOUND;
+    const int kMaxWalk = 4096; // anti-loop
+
+    PREGISTRY_CALLBACK_ITEM head = (PREGISTRY_CALLBACK_ITEM)regNotifyArrayAddr;
+    PREGISTRY_CALLBACK_ITEM curr = head;
+
+    int walked = 0;
+    __try
+    {
+        while (walked++ < kMaxWalk)
+        {
+            if (!MmIsAddressValid(curr))
+                break;
+
+            // Leggi info sulla funzione del callback
+            ULONG64 cbFunc = curr->Function;
+
+            if (cbFunc && MmIsAddressValid((PVOID)cbFunc))
+            {
+                ModulesData md = { 0 };
+                NTSTATUS s = SearchModules(cbFunc, &md);
+                if (NT_SUCCESS(s))
+                {
+                    // confronto case-insensitive
+                    if (_stricmp(md.ModuleName, moduleName) == 0)
+                    {
+                        DbgPrintEx(0, 0, "deleting entry: %s", md.ModuleName);
+                        // Unlink sicuro con controlli
+                        PLIST_ENTRY prev = curr->Item.Blink;
+                        PLIST_ENTRY next = curr->Item.Flink;
+
+                        if (prev && next &&
+                            MmIsAddressValid(prev) &&
+                            MmIsAddressValid(next) &&
+                            prev->Flink && next->Blink)
+                        {
+                            // scollega curr
+                            prev->Flink = next;
+                            next->Blink = prev;
+
+                            // Isola il nodo per evitare use-after-free di link
+                            InitializeListHead(&curr->Item);
+
+                            status = STATUS_SUCCESS;
+                        }
+                        else
+                        {
+                            status = STATUS_DATA_ERROR; // lista corrotta/inconsistente
+                        }
+                        break; // rimuove la PRIMA occorrenza; togli se vuoi continuare
+                    }
+                }
+            }
+
+            // Avanza
+            PLIST_ENTRY flink = curr->Item.Flink;
+            if (!flink || !MmIsAddressValid(flink))
+                break;
+
+            // Se torniamo all’head abbiamo chiuso il giro
+            if (flink == &head->Item)
+                break;
+
+            // Assumiamo che LIST_ENTRY sia il primo campo della struct
+            curr = (PREGISTRY_CALLBACK_ITEM)flink;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        status = GetExceptionCode() ? STATUS_ACCESS_VIOLATION : STATUS_UNHANDLED_EXCEPTION;
+    }
+
+    return status;
 }
 
 NTSTATUS RemObjCallbackNotifyRoutineAddress() {

@@ -154,6 +154,15 @@ typedef struct _MODULE_ENTRY
 } MODULE_ENTRY, * PMODULE_ENTRY;
 
 
+typedef struct _REGISTRY_CALLBACK_ITEM {
+    LIST_ENTRY Item;
+    DWORD64 Unknown1[2];
+    DWORD64 Context;
+    DWORD64 Function;
+    UNICODE_STRING Altitude;
+    DWORD64 Unknown2[2];
+} REGISTRY_CALLBACK_ITEM, * PREGISTRY_CALLBACK_ITEM;
+
 typedef enum _DCMB_CALLBACK_TYPE {
     ProcessObjectCreationCallback,
     ThreadObjectCreationCallback,
@@ -183,6 +192,8 @@ struct disKerETWArgs {
 
 
 ModulesData* EnumRegisteredDrivers(UINT64);
+ModulesData* EnumRegCallbackDrivers(ULONG64);
+
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 UINT64 FindThreadNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 UINT64 FindLoadImageNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
@@ -192,7 +203,7 @@ UINT64 FindRegCallbackNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 NTSTATUS SearchModules(ULONG64, ModulesData*);
 UINT64 FindKernelBase();
 NTSTATUS DeleteNotifyEntry(ULONG64, int);
-NTSTATUS DeleteRegCallbackEntry(ULONG64);
+NTSTATUS DeleteRegCallbackEntry(ULONG64, CHAR*);
 NTSTATUS RemObjCallbackNotifyRoutineAddress();
 
 NTSTATUS pplBypass(UINT64, int);

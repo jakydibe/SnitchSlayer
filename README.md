@@ -25,6 +25,7 @@ Its main objective is making the snitches (Antiviruses/EDRs) shut up or kill the
 5) PPL bypass via chaning its eprocess structure.
 6) Hiding a UserMode process from processes linked list.
 7) Hiding kernel driver from drivers linked list.
+8) Disabling Windows Threat Intelligence kernel mode ETW provider
 
 # Usage
 

