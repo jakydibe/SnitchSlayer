@@ -5,6 +5,9 @@
 //#include <ntddk.h>
 #include <Aux_klib.h>
 #include <minwindef.h>
+#include <fltKernel.h>
+#include <stddef.h>
+
 
 
 
@@ -40,6 +43,8 @@
 #define IOCTL_UNMAP_PROC CTL_CODE_HIDE(16)
 #define IOCTL_WIN_ETW_DISABLE CTL_CODE_HIDE(17)
 #define IOCTL_LIST_OBJ_CALLBACKS CTL_CODE_HIDE(18)
+#define IOCTL_LIST_MINIFILTERS CTL_CODE_HIDE(19)
+#define IOCTL_REM_MINIFILTER_CALLBACK CTL_CODE_HIDE(20)
 
 
 
@@ -163,6 +168,24 @@ typedef struct OB_CALLBACK_ENTRY_t {
     KSPIN_LOCK Lock;                         // Synchronization mechanism
 } OB_CALLBACK_ENTRY, * POB_CALLBACK_ENTRY;
 
+typedef struct _CALLBACK_NODE {
+    LIST_ENTRY CallbackLinks;
+    PFLT_INSTANCE Instance;
+    union {
+        PVOID PreOperation;
+        PVOID GenerateFileName;
+        PVOID NormalizeNameComponent;
+        PVOID NormalizeNameComponentEx;
+    };
+    union {
+        PVOID NormalizeContextCleanup;
+        PVOID PostOperation;
+    };
+    DWORD64 Flags;
+    //...
+} CALLBACK_NODE, * PCALLBACK_NODE;
+
+
 typedef enum _DCMB_CALLBACK_TYPE {
     ProcessObjectCreationCallback,
     ThreadObjectCreationCallback,
@@ -190,10 +213,20 @@ struct disKerETWArgs {
     DWORD GuidEntry_ProviderEnableInfoOffset;
 };
 
+typedef struct _MinifilterData {
+    WCHAR FilterName[256];
+    WCHAR FilterAltitude[256];
+} MinifilterData, * PMinifilterData;
+
+typedef struct UnlinkRequest {
+    WCHAR FilterName[256];
+} UnlinkRequest, * PUnlinkRequest;
+
 
 ModulesData* EnumRegisteredDrivers(UINT64);
 ModulesData* EnumRegCallbackDrivers(ULONG64);
 ModulesData* EnumObjCallbackDrivers();
+MinifilterData* EnumMiniFiltersDrv();
 
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 UINT64 FindThreadNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
@@ -206,6 +239,7 @@ UINT64 FindKernelBase();
 NTSTATUS DeleteNotifyEntry(ULONG64, int);
 NTSTATUS DeleteRegCallbackEntry(ULONG64, CHAR*);
 NTSTATUS DeleteObjCallbackNotifyRoutineAddress(CHAR*);
+NTSTATUS DeleteMinifilterCallbacks(const WCHAR* filterName);
 
 NTSTATUS pplBypass(UINT64, int);
 NTSTATUS procTokenSwap(DWORD, DWORD, int);
@@ -218,6 +252,9 @@ NTSTATUS procHiding(DWORD, DWORD);
 NTSTATUS unlinkDriver(PDRIVER_OBJECT);
 
 NTSTATUS disablingWTI(ULONG64, disKerETWArgs);
+
+BOOL DcmbReadMemorySafe(PVOID TargetAddress, PVOID AllocatedBuffer, SIZE_T LengthToRead);
+BOOL DcmbValidatePotentialCallbackNodes(PCALLBACK_NODE PotentialCallbackNode, PFLT_INSTANCE FltInstance, DWORD64 DriverStartAddr, DWORD64 DriverSize);
 
 #ifndef SystemModuleInformation
 #define SystemModuleInformation 0xB

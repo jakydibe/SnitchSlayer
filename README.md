@@ -19,7 +19,7 @@ Its main objective is making the snitches (Antiviruses/EDRs) shut up or kill the
     3) Removal of image Loading kernel callbacks.
     4) Removal of Registry operation kernel callbacks.
     5) Removal of Object operations kernel callbacks.
-    6) Removal of MiniFilter kernel callbacks (NOT IMPLEMENTD).
+    6) Removal of MiniFilter kernel callbacks.
 3) Elevate a User Mode process via Token stealing.
 4) Downgrading a process token.
 5) PPL bypass via chaning its eprocess structure.
@@ -48,7 +48,7 @@ Right now it is not implements as a single executable so the driver needs to be 
 ## TO:DO
 
 1) ~~Improving Object/Registry kernel callbacks removal.~~
-2) Implementing MiniFilter kernel callbacks removal.
+2) ~~Implementing MiniFilter kernel callbacks removal.~~
 3) ~~Switching to offset finding through PDB files downloaded at runtime.~~
 4) Implementing more Function resolving at Runtime (Like ZwTerminateProcess).
 5) Implementing Credential Guard bypass for LSASS dump.

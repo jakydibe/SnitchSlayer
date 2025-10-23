@@ -478,9 +478,80 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             ULONG64 kernelBase = FindKernelBase();
 
             disablingWTI(kernelBase, args);
-
+            break;
 
         }
+        case IOCTL_LIST_MINIFILTERS:
+        {
+            if (stack->Parameters.DeviceIoControl.InputBufferLength < sizeof(DWORD64)) {
+                status = STATUS_BUFFER_TOO_SMALL;
+                info = 0;
+                break;
+            }
+
+            DWORD64 attempt = *(DWORD64*)Irp->AssociatedIrp.SystemBuffer;
+
+            ULONG filterNum = 0;
+            NTSTATUS st = FltEnumerateFilters(NULL, 0, &filterNum);
+            if (st != STATUS_BUFFER_TOO_SMALL && !NT_SUCCESS(st)) {
+                status = st;
+                info = 0;
+                break;
+            }
+
+            if (attempt == 0) {
+                // Primo giro: restituisci il conteggio come QWORD
+                if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(DWORD64)) {
+                    status = STATUS_BUFFER_TOO_SMALL;
+                    info = 0;
+                    break;
+                }
+                DWORD64 count64 = (DWORD64)filterNum;
+                RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, &count64, sizeof(count64));
+                info = sizeof(DWORD64);                 // <<< FIX cruciale
+                status = STATUS_SUCCESS;
+                break;
+            }
+
+            // Secondo giro: riempi l’array
+            if (filterNum == 0) {
+                info = 0;
+                status = STATUS_SUCCESS;
+                break;
+            }
+
+            MinifilterData* tmpFilters = EnumMiniFiltersDrv(); // deve restituire filterNum elementi
+            if (!tmpFilters) {
+                status = STATUS_INSUFFICIENT_RESOURCES;
+                info = 0;
+                break;
+            }
+
+            SIZE_T needed = (SIZE_T)filterNum * sizeof(MinifilterData);
+            if (stack->Parameters.DeviceIoControl.OutputBufferLength < needed) {
+                ExFreePool(tmpFilters);
+                status = STATUS_BUFFER_TOO_SMALL;
+                info = 0;
+                break;
+            }
+
+            RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, tmpFilters, needed);
+            info = (ULONG)needed;
+            ExFreePool(tmpFilters);
+            status = STATUS_SUCCESS;
+            break;
+        }
+        case IOCTL_REM_MINIFILTER_CALLBACK:
+        {
+            WCHAR* mfToRemove = (WCHAR*)Irp->AssociatedIrp.SystemBuffer;
+
+            DbgPrintEx(0, 0, "Removing Minifilter callback of %ws\n",mfToRemove);
+
+            status = DeleteMinifilterCallbacks(mfToRemove);
+
+            break;
+        }
+
         default:
             status = STATUS_INVALID_DEVICE_REQUEST;
             DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,
