@@ -334,11 +334,14 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                 break;
             }
             UINT64 neededSize = sizeof(ModulesData) * 64;
-            ModulesData* modules = (ModulesData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * 64, DRIVER_TAG);
+            //ModulesData* modules = (ModulesData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * 64, DRIVER_TAG);
+            ModulesData* modules;
             modules = EnumRegCallbackDrivers(regNotifyArrayAddr);
             DbgPrintEx(0, 0, "[%s: LIST_REG] Registry Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, regNotifyArrayAddr);
 
             memcpy(Irp->AssociatedIrp.SystemBuffer, modules, neededSize);
+
+            ExFreePool(modules);
 
             info = neededSize;
 			status = STATUS_SUCCESS;
@@ -349,25 +352,43 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             CHAR* moduleToRemove = (CHAR*)Irp->AssociatedIrp.SystemBuffer;
             ULONG64 kernelBase = FindKernelBase();
             if (!kernelBase) {
-                DbgPrintEx(0, 0, "[%s: LIST_REG] Failed to find kernel base\n", DRIVER_NAME);
+                DbgPrintEx(0, 0, "[%s: REG_REM] Failed to find kernel base\n", DRIVER_NAME);
                 status = STATUS_UNSUCCESSFUL;
                 break;
             }
             ULONG64 regNotifyArrayAddr = FindRegCallbackNotifyRoutineAddress(kernelBase, ImageLoadCallback);
             if (!regNotifyArrayAddr) {
-                DbgPrintEx(0, 0, "[%s: LIST_REG] Failed to find registry notify routine address\n", DRIVER_NAME);
+                DbgPrintEx(0, 0, "[%s: REG_REM] Failed to find registry notify routine address\n", DRIVER_NAME);
                 status = STATUS_UNSUCCESSFUL;
                 break;
             }
             //procNotifyArrayAddr = *(PULONG64)(procNotifyArrayAddr & 0xfffffffffffffff8);
-            DbgPrintEx(0, 0, "[%s: LIST_REG] Registry Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, regNotifyArrayAddr);
+            DbgPrintEx(0, 0, "[%s: REG_REM] Registry Notify Routine Array Address: 0x%llx\n", DRIVER_NAME, regNotifyArrayAddr);
 			status = DeleteRegCallbackEntry(regNotifyArrayAddr, moduleToRemove);
             info = 0;
             break;
         }
+        case IOCTL_LIST_OBJ_CALLBACKS:
+        {
+            ModulesData* allMods = EnumObjCallbackDrivers();
+
+            UINT64 neededSize = sizeof(ModulesData) * 128;
+            memcpy(Irp->AssociatedIrp.SystemBuffer, allMods, neededSize);
+
+            ExFreePool(allMods);
+            info = neededSize;
+            status = STATUS_SUCCESS;
+            break;
+        }
         case IOCTL_REM_OBJ_CALLBACK:
         {
-			RemObjCallbackNotifyRoutineAddress();
+            CHAR* moduleToRemove = (CHAR*)Irp->AssociatedIrp.SystemBuffer;
+
+            //procNotifyArrayAddr = *(PULONG64)(procNotifyArrayAddr & 0xfffffffffffffff8);
+            DbgPrintEx(0, 0, "[%s: OBJ_REM] object Notify Routine\n", DRIVER_NAME);
+            status = DeleteObjCallbackNotifyRoutineAddress(moduleToRemove);
+            info = 0;
+            break;
         }
         case IOCTL_CRASH_PROCESS:
         {

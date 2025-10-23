@@ -18,7 +18,7 @@ Its main objective is making the snitches (Antiviruses/EDRs) shut up or kill the
     2) Removal of Thread creation kernel callbacks.
     3) Removal of image Loading kernel callbacks.
     4) Removal of Registry operation kernel callbacks.
-    5) Removal of Object operations kernel callbacks (BADLY IMPLEMENTED).
+    5) Removal of Object operations kernel callbacks.
     6) Removal of MiniFilter kernel callbacks (NOT IMPLEMENTD).
 3) Elevate a User Mode process via Token stealing.
 4) Downgrading a process token.
@@ -47,12 +47,12 @@ Right now it is not implements as a single executable so the driver needs to be 
 
 ## TO:DO
 
-1) Improving Object/Registry kernel callbacks removal.
+1) ~~Improving Object/Registry kernel callbacks removal.~~
 2) Implementing MiniFilter kernel callbacks removal.
 3) ~~Switching to offset finding through PDB files downloaded at runtime.~~
 4) Implementing more Function resolving at Runtime (Like ZwTerminateProcess).
 5) Implementing Credential Guard bypass for LSASS dump.
-6) Disabling kernel Mode ETW providers.
+6) ~~Disabling kernel Mode ETW providers (Done, but only Windows Thread Intelligence).~~
 7) Implementing driver loading at runtime from resources instead of manually loading with sc.exe.
 8) disabling user mode ETW providers for a process (idk inject a dll on that process or create a remote thread idk).
 

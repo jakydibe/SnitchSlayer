@@ -438,7 +438,6 @@ UINT64 FindRegCallbackNotifyRoutineAddress(UINT64 kernelBase, NOTIFY_ROUTINE_TYP
 }
 
 
-
 NTSTATUS SearchModules(ULONG64 ModuleAddr, ModulesData* ModuleFound) {
     NTSTATUS status = STATUS_SUCCESS;
     ULONG modulesSize = 0;
@@ -534,8 +533,7 @@ ModulesData* EnumRegCallbackDrivers(ULONG64 regNotifyArrayAddr)
 
     ModulesData tmpMod = { 0 };
 
-    ModulesData* moduleDatas = (ModulesData*)
-        ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * kMax, DRIVER_TAG);
+    ModulesData* moduleDatas = (ModulesData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * kMax, DRIVER_TAG);
     if (!moduleDatas) {
         return NULL;
     }
@@ -600,6 +598,80 @@ ModulesData* EnumRegCallbackDrivers(ULONG64 regNotifyArrayAddr)
     // Se vuoi, potresti restituire anche il numero valido (counter) via out-param.
     // Qui mantengo la tua firma e lascio gli slot non usati a zero.
     return moduleDatas;
+}
+
+ModulesData* EnumObjCallbackDrivers() {
+    DWORD64 ProcessObjectType = (DWORD64)*PsProcessType;
+    DWORD64 ThreadObjectType = (DWORD64)*PsThreadType;
+    NTSTATUS status;
+
+    LIST_ENTRY* procListHead = (LIST_ENTRY*)(ProcessObjectType + 0xc8);
+    
+    LIST_ENTRY* threadListHead = (LIST_ENTRY*)(ThreadObjectType + 0xc8);
+
+    //ModulesData* procModules = (ModulesData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * 64, DRIVER_TAG);
+    //ModulesData* threadModules = (ModulesData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * 64, DRIVER_TAG);
+    ModulesData* allMods = (ModulesData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * 128, DRIVER_TAG);
+
+
+    int counter = 0;
+
+    LIST_ENTRY* tmpEntry = procListHead->Flink;
+
+    while (tmpEntry != procListHead) {
+        ModulesData module;
+        OB_CALLBACK_ENTRY* objEntry = CONTAINING_RECORD(tmpEntry, OB_CALLBACK_ENTRY, CallbackList);
+        if (MmIsAddressValid(objEntry) && MmIsAddressValid(objEntry->PreOperation)) {
+            ULONG64 address = (ULONG64)objEntry->PreOperation;
+            status = SearchModules(address, &module);
+            if (NT_SUCCESS(status)) {
+                allMods[counter] = module;
+            }
+        }
+        else if (MmIsAddressValid(objEntry) && MmIsAddressValid(objEntry->PostOperation)) {
+            ULONG64 address = (ULONG64)objEntry->PostOperation;
+            status = SearchModules(address, &module);
+            if (NT_SUCCESS(status)) {
+                allMods[counter] = module;
+            }
+        }
+        else {
+            break;
+        }
+
+        tmpEntry = tmpEntry->Flink;
+        counter += 1;
+    } 
+
+    counter = 63;
+
+    tmpEntry = threadListHead->Flink;
+    while (tmpEntry != threadListHead) {
+        ModulesData module;
+        OB_CALLBACK_ENTRY* objEntry = CONTAINING_RECORD(tmpEntry, OB_CALLBACK_ENTRY, CallbackList);
+        if (MmIsAddressValid(objEntry) && MmIsAddressValid(objEntry->PreOperation)) {
+            ULONG64 address = (ULONG64)objEntry->PreOperation;
+            status = SearchModules(address, &module);
+            if (NT_SUCCESS(status)) {
+                allMods[counter] = module;
+            }
+        }
+        else if (MmIsAddressValid(objEntry) && MmIsAddressValid(objEntry->PostOperation)) {
+            ULONG64 address = (ULONG64)objEntry->PostOperation;
+            status = SearchModules(address, &module);
+            if (NT_SUCCESS(status)) {
+                allMods[counter] = module;
+            }
+        }
+        else {
+            break;
+        }
+
+        tmpEntry = tmpEntry->Flink;
+        counter += 1;
+    }
+    
+    return allMods;
 }
 
 NTSTATUS DeleteRegCallbackEntry(ULONG64 regNotifyArrayAddr, CHAR* moduleName)
@@ -686,27 +758,86 @@ NTSTATUS DeleteRegCallbackEntry(ULONG64 regNotifyArrayAddr, CHAR* moduleName)
     return status;
 }
 
-NTSTATUS RemObjCallbackNotifyRoutineAddress() {
+// Non so bene perche' ma non unlinka l'entry dalla linked list. invece settiamo il puntatore alla funzione di callback a NULL (dovrebbe funzionare lo stesso ezez)
+NTSTATUS DeleteObjCallbackNotifyRoutineAddress(CHAR* moduleName) {
     DWORD64 ProcessObjectType = (DWORD64)*PsProcessType;
     DWORD64 ThreadObjectType = (DWORD64)*PsThreadType;
+    NTSTATUS status;
 
     LIST_ENTRY* procListHead = (LIST_ENTRY*)(ProcessObjectType + 0xc8);
-    procListHead->Flink = procListHead;
-	procListHead->Blink = procListHead;
 
-	LIST_ENTRY* threadListHead = (LIST_ENTRY*)(ThreadObjectType + 0xc8);
-	threadListHead->Flink = threadListHead;
-	threadListHead->Blink = threadListHead;
+    LIST_ENTRY* threadListHead = (LIST_ENTRY*)(ThreadObjectType + 0xc8);
 
-    if (procListHead->Flink == procListHead && procListHead->Blink == procListHead) {
-        DbgPrintEx(0, 0, "[%s] Successfully removed object callback entry\n", DRIVER_NAME);
+    //ModulesData* procModules = (ModulesData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * 64, DRIVER_TAG);
+    //ModulesData* threadModules = (ModulesData*)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(ModulesData) * 64, DRIVER_TAG);
+
+
+
+    LIST_ENTRY* tmpEntry = procListHead->Flink;
+
+    while (tmpEntry != procListHead) {
+        ModulesData module;
+        OB_CALLBACK_ENTRY* objEntry = CONTAINING_RECORD(tmpEntry, OB_CALLBACK_ENTRY, CallbackList);
+        if (MmIsAddressValid(objEntry) && MmIsAddressValid(objEntry->PreOperation)) {
+            ULONG64 address = (ULONG64)objEntry->PreOperation;
+            status = SearchModules(address, &module);
+
+            if (NT_SUCCESS(status)) {
+                if (_stricmp(module.ModuleName, moduleName) == 0) {
+                    InterlockedExchangePointer((PVOID*)&objEntry->PreOperation, NULL);
+                }
+            }
+        }
+        else if (MmIsAddressValid(objEntry) && MmIsAddressValid(objEntry->PostOperation)) {
+            ULONG64 address = (ULONG64)objEntry->PostOperation;
+            status = SearchModules(address, &module);
+            if (NT_SUCCESS(status)) {
+                if (_stricmp(module.ModuleName, moduleName) == 0) {
+                    InterlockedExchangePointer((PVOID*)&objEntry->PostOperation, NULL);
+                }
+            }
+
+        }
+        else {
+            break;
+        }
+
+        tmpEntry = tmpEntry->Flink;
     }
-    else {
-        DbgPrintEx(0, 0, "[%s] Failed to remove process callback entry\n", DRIVER_NAME);
-        return STATUS_UNSUCCESSFUL;
+
+
+    tmpEntry = threadListHead->Flink;
+    while (tmpEntry != threadListHead) {
+        ModulesData module;
+        OB_CALLBACK_ENTRY* objEntry = CONTAINING_RECORD(tmpEntry, OB_CALLBACK_ENTRY, CallbackList);
+        if (MmIsAddressValid(objEntry) && MmIsAddressValid(objEntry->PreOperation)) {
+            ULONG64 address = (ULONG64)objEntry->PreOperation;
+            status = SearchModules(address, &module);
+            if (NT_SUCCESS(status)) {
+                if (_stricmp(module.ModuleName, moduleName) == 0) {
+                    InterlockedExchangePointer((PVOID*)&objEntry->PreOperation, NULL);
+                }
+            }
+        }
+        else if (MmIsAddressValid(objEntry) && MmIsAddressValid(objEntry->PostOperation)) {
+            ULONG64 address = (ULONG64)objEntry->PostOperation;
+            status = SearchModules(address, &module);
+            if (NT_SUCCESS(status)) {
+                if (_stricmp(module.ModuleName, moduleName) == 0) {
+                    InterlockedExchangePointer((PVOID*)&objEntry->PostOperation, NULL);
+                }
+            }
+        }
+        else {
+            break;
+        }
+
+        tmpEntry = tmpEntry->Flink;
     }
-    return 0;
+    status = STATUS_SUCCESS;
+    return status;
 }
+
 
 NTSTATUS pplBypass(UINT64 pidVal, int offset) {
 	NTSTATUS status;

