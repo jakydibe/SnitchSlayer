@@ -552,6 +552,7 @@ NTSTATUS DeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             break;
         }
 
+
         default:
             status = STATUS_INVALID_DEVICE_REQUEST;
             DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_WARNING_LEVEL,
