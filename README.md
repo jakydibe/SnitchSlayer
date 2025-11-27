@@ -42,7 +42,8 @@ Right now it is not implements as a single executable so the driver needs to be 
 
 1) `.\SnitchHater.exe`
 2) `help` to display all functionalities and commands 
-![alt text](image-1.png)
+<img width="967" height="955" alt="image" src="https://github.com/user-attachments/assets/aebb819c-94ca-4121-8a49-7890436eaeb4" />
+
 
 
 ## TO:DO
